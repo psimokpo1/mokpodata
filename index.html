@@ -1026,7 +1026,7 @@
         };
     }
 
-    // 💡 [실시간 운항상황판 렌더링 - 예비선 동적 승계 엔진 적용]
+    // 💡 [실시간 운항상황판 렌더링 - 예비선 동적 승계 및 선속/거리/운항시간 완전 연동]
     function renderOperationBoard() {
         const tbody = document.getElementById('board-tbody');
         const mobileContainer = document.getElementById('board-mobile-cards');
@@ -1034,7 +1034,7 @@
 
         let combined = [];
         baseShipData.forEach((d, idx) => {
-            let code = d[1] || `idx_${idx}`;
+            let code = (d[1] || `idx_${idx}`).trim();
             let override = cloudCustomData[code] || {};
             if (override.isDeleted || override.isHidden) return;
 
@@ -1042,7 +1042,7 @@
             let route = override.route !== undefined ? override.route : d[2];
             let decision = override.decision !== undefined ? override.decision : d[7];
             let notes = override.notes !== undefined ? override.notes : d[5];
-            let deployedTarget = override.deployedTarget || null;
+            let deployedTarget = override.deployedTarget ? String(override.deployedTarget).trim() : null;
 
             combined.push({
                 code: code,
@@ -1056,16 +1056,19 @@
 
         customAddedShips.forEach(s => {
             if (s.isDeleted || s.isHidden) return;
+            let code = String(s.id).trim();
+            let deployedTarget = s.deployedTarget ? String(s.deployedTarget).trim() : null;
             combined.push({
-                code: s.id,
+                code: code,
                 rawName: s.rawName,
                 route: s.route,
                 decision: s.decision,
                 notes: s.notes || '',
-                deployedTarget: s.deployedTarget || null
+                deployedTarget: deployedTarget
             });
         });
 
+        // 대체 투입된 대상(피대체 본선) 맵 구성
         let deployedMap = {};
         combined.forEach(s => {
             if (s.deployedTarget) {
@@ -1074,8 +1077,10 @@
         });
 
         combined.sort((a, b) => {
-            let aEffectiveRoute = a.deployedTarget ? (combined.find(x => x.code === a.deployedTarget)?.route || a.route) : a.route;
-            let bEffectiveRoute = b.deployedTarget ? (combined.find(x => x.code === b.deployedTarget)?.route || b.route) : b.route;
+            let aTarget = a.deployedTarget ? combined.find(x => x.code === a.deployedTarget) : null;
+            let bTarget = b.deployedTarget ? combined.find(x => x.code === b.deployedTarget) : null;
+            let aEffectiveRoute = aTarget ? aTarget.route : a.route;
+            let bEffectiveRoute = bTarget ? bTarget.route : b.route;
 
             let aIsReserveOnly = ((aEffectiveRoute || '').trim() === '예비선');
             let bIsReserveOnly = ((bEffectiveRoute || '').trim() === '예비선');
@@ -1106,6 +1111,7 @@
                 let parsed = ownParsed;
                 let effectiveRoute = ship.route;
 
+                // 💡 [핵심 승계 엔진]: 기상기준, 관측계소, 특보구역, 본선 항해제원 승계
                 if (isDeployedReserve && targetShip) {
                     let targetParsed = parseVesselControlCriteria(targetShip.rawName, targetShip.decision, targetShip.route, targetShip.notes);
                     effectiveRoute = targetShip.route;
@@ -1126,6 +1132,7 @@
                     };
                 }
 
+                // 피대체 본선은 휴항/정비 처리
                 if (isRestingBySub) {
                     let subCleanName = (substituteShip.rawName || '').split('(')[0].split('\n')[0].trim();
                     rowsHtml += `
@@ -1137,6 +1144,17 @@
                             <td style="color:#94A3B8;">-</td>
                         </tr>
                     `;
+
+                    let rKey = ship.route || '기타항로';
+                    if (!mobileGroups[rKey]) {
+                        mobileGroups[rKey] = { route: rKey, isReserve: false, warnings: [], meteoSummary: '휴항/정비', ships: [] };
+                    }
+                    mobileGroups[rKey].ships.push({
+                        name: cleanName,
+                        tonnage: ownParsed.tonnage,
+                        statusBadge: `<span class="status-badge badge-off">⚪ 휴항/정비 (${subCleanName} 대선)</span>`,
+                        criteriaText: '정비휴항'
+                    });
                     return;
                 }
 
@@ -1522,7 +1540,8 @@
 
     // 💡 [예비선 대체 투입 팝업 모달 제어 함수]
     window.openDeployModal = (reserveCode) => {
-        const reserveShip = baseShipData.find(s => s[1] === reserveCode) || customAddedShips.find(s => s.id === reserveCode);
+        reserveCode = String(reserveCode).trim();
+        const reserveShip = baseShipData.find(s => s[1].trim() === reserveCode) || customAddedShips.find(s => String(s.id).trim() === reserveCode);
         if (!reserveShip) return;
 
         let override = cloudCustomData[reserveCode] || {};
@@ -1536,7 +1555,7 @@
 
         let regularShips = [];
         baseShipData.forEach(s => {
-            let code = s[1];
+            let code = s[1].trim();
             let ov = cloudCustomData[code] || {};
             let route = ov.route !== undefined ? ov.route : s[2];
             let name = (ov.rawName !== undefined ? ov.rawName : s[0]).split('(')[0].split('\n')[0].trim();
@@ -1547,7 +1566,7 @@
 
         customAddedShips.forEach(s => {
             if ((s.route || '').trim() !== '예비선') {
-                regularShips.push({ code: s.id, name: s.rawName.split('(')[0].trim(), route: s.route });
+                regularShips.push({ code: String(s.id).trim(), name: s.rawName.split('(')[0].trim(), route: s.route });
             }
         });
 
@@ -1557,7 +1576,7 @@
             let opt = document.createElement('option');
             opt.value = rs.code;
             opt.innerText = `[${rs.route}] ${rs.name}`;
-            if (override.deployedTarget === rs.code) {
+            if (override.deployedTarget && override.deployedTarget.trim() === rs.code) {
                 opt.selected = true;
             }
             selectEl.appendChild(opt);
@@ -1579,10 +1598,11 @@
     window.saveDeployStatus = async (targetCode) => {
         let reserveCode = document.getElementById('deploy-ship-code').value;
         if (!reserveCode) return;
+        reserveCode = reserveCode.trim();
 
         try {
             await db.collection("vessel_overrides").doc(reserveCode).set({
-                deployedTarget: targetCode || null,
+                deployedTarget: targetCode ? targetCode.trim() : null,
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp()
             }, { merge: true });
 
@@ -2022,7 +2042,7 @@
             let combined = [];
 
             baseShipData.forEach((d, idx) => {
-                let code = d[1] || `idx_${idx}`;
+                let code = (d[1] || `idx_${idx}`).trim();
                 let override = cloudCustomData[code] || {};
                 if (override.isDeleted) return;
 
@@ -2041,17 +2061,18 @@
                     customFields: override.customFields || [],
                     timetables: override.timetables || [],
                     isHidden: !!override.isHidden,
-                    deployedTarget: override.deployedTarget || null,
+                    deployedTarget: override.deployedTarget ? String(override.deployedTarget).trim() : null,
                     cloudPhoto: photoUrl
                 });
             });
 
             customAddedShips.forEach(s => {
                 if (s.isDeleted) return;
+                let code = String(s.id).trim();
                 let photoUrl = (s.images && s.images.photo) || s.photo || null;
                 combined.push({
                     isCustom: true,
-                    code: s.id,
+                    code: code,
                     rawName: s.rawName || '신규선박',
                     route: s.route || '기타항로',
                     company: s.company || '-',
@@ -2062,7 +2083,7 @@
                     customFields: s.customFields || [],
                     timetables: s.timetables || [],
                     isHidden: !!s.isHidden,
-                    deployedTarget: s.deployedTarget || null,
+                    deployedTarget: s.deployedTarget ? String(s.deployedTarget).trim() : null,
                     cloudPhoto: photoUrl
                 });
             });
@@ -2102,18 +2123,17 @@
                     let deployedBadge = '';
                     let isOriginalReserve = (v.route || '').trim() === '예비선';
                     
-                    // 💡 [대체투입 시 예비선 고유명/톤수 + 본선의 통제기준 및 항해제원(선속/거리/운항시간) 결합]
                     let displayNameText = v.rawName || '';
                     if (isOriginalReserve && v.targetShip) {
                         let tName = (v.targetShip.rawName || '').split('(')[0].split('\n')[0].trim();
                         deployedBadge = `<span class="badge-deployed">⚡ [${tName} 대체운항 중]</span>`;
 
                         let reserveLines = (v.rawName || '').split('\n').map(l => l.trim()).filter(Boolean);
-                        let reserveHeader = reserveLines[0] || ''; // 예: 천사2호 (364G/T)
+                        let reserveHeader = reserveLines[0] || '';
 
                         let targetLines = (v.targetShip.rawName || '').split('\n').map(l => l.trim()).filter(Boolean);
-                        let targetCriteria = targetLines.length > 1 ? targetLines[1] : ''; // 예: (통제기준: 12m/s, 최대파고 2.0m)
-                        let targetSpeedDist = targetLines.length > 2 ? targetLines[2] : ''; // 예: 12kt / 4해리(7.1km) / 18분
+                        let targetCriteria = targetLines.length > 1 ? targetLines[1] : '';
+                        let targetSpeedDist = targetLines.length > 2 ? targetLines[2] : '';
 
                         let combinedLines = [reserveHeader];
                         if (targetCriteria) combinedLines.push(targetCriteria);
@@ -2613,8 +2633,9 @@
     };
 
     window.openEditModal = (shipCode) => {
-        let ship = baseShipData.find(s => s[1] === shipCode);
-        let custom = customAddedShips.find(s => s.id === shipCode);
+        shipCode = String(shipCode).trim();
+        let ship = baseShipData.find(s => s[1].trim() === shipCode);
+        let custom = customAddedShips.find(s => String(s.id).trim() === shipCode);
         let currentData = cloudCustomData[shipCode] || {};
 
         document.getElementById('edit-vessel-key').value = shipCode;
@@ -2796,7 +2817,7 @@
         
         if (!confirm(msg)) return;
 
-        db.collection("vessel_overrides").doc(shipCode).set({
+        db.collection("vessel_overrides").doc(shipCode.trim()).set({
             isHidden: toHide,
             updatedAt: firebase.firestore.FieldValue.serverTimestamp()
         }, { merge: true })
@@ -2809,7 +2830,8 @@
             return;
         }
 
-        let isCustom = customAddedShips.some(s => s.id === shipCode);
+        shipCode = shipCode.trim();
+        let isCustom = customAddedShips.some(s => String(s.id).trim() === shipCode);
         if (isCustom) {
             db.collection("vessel_overrides").doc(shipCode).delete()
                 .then(() => alert("선박이 영구 삭제되었습니다."))
