@@ -455,7 +455,7 @@
         <div style="font-size:12px; color:#64748B; background:#F8FAFC; padding:10px; border-radius:6px; line-height:1.6; margin-top:10px;">
             💡 <strong>승계 원칙 안내:</strong><br>
             • <strong>고유 제원 유지:</strong> 예비선 본래의 톤수(G/T)와 여객정원은 그대로 유지됩니다.<br>
-            • <strong>기상 기준 승계:</strong> 선택한 본선의 통제기준(풍속/파고), 참조 관측계소, 관할 특보구역을 100% 이어받아 상황판에 실시간 반영됩니다.<br>
+            • <strong>기상/항해제원 승계:</strong> 선택한 본선의 통제기준(풍속/파고), 참조 관측계소, 관할 특보구역, <strong>선속·거리·운항시간</strong>을 100% 이어받아 상황판 및 목록에 실시간 반영됩니다.<br>
             • <strong>피대체선 처리:</strong> 원래 본선은 상황판에서 <em>[휴항/정비]</em> 상태로 자동 전환됩니다.
         </div>
 
@@ -2015,7 +2015,7 @@
         fetchWeatherRealtime(false);
     }
 
-    // 💡 [기초자료 탭에서도 대체 투입된 항로로 자동 편입 렌더링]
+    // 💡 [기초자료 탭에서도 대체 투입된 항로로 자동 편입 및 본선 항해제원(선속/거리/운항시간) 조립 렌더링]
     function render() {
         try {
             const showHidden = document.getElementById('showHiddenToggle').checked;
@@ -2073,7 +2073,6 @@
             
             document.getElementById('stats').innerText = `[ ${regularRoutes.size}개 항로 / 총 ${uniqueVesselCount}척 ]`;
 
-            // 대체 투입된 선박의 표시 항로 동기화
             let groups = {};
             visibleShips.forEach(s => {
                 let targetShip = s.deployedTarget ? visibleShips.find(x => x.code === s.deployedTarget) : null;
@@ -2098,15 +2097,32 @@
                 groups[r].forEach((v, idx) => {
                     let cleanName = (v.rawName || '').split('(')[0].split('\n')[0].trim().replace(/\s/g, '');
                     if (cleanName === "상동") cleanName = "도초카훼리";
-                    let vNameHTML = (v.rawName || '').replace(/\n/g, '<br>').replace(/(통제기준:[^)]+\))/g, '<span class="highlight-red">$1</span>');
                     let uId = cleanName + idx;
 
                     let deployedBadge = '';
                     let isOriginalReserve = (v.route || '').trim() === '예비선';
+                    
+                    // 💡 [대체투입 시 예비선 고유명/톤수 + 본선의 통제기준 및 항해제원(선속/거리/운항시간) 결합]
+                    let displayNameText = v.rawName || '';
                     if (isOriginalReserve && v.targetShip) {
                         let tName = (v.targetShip.rawName || '').split('(')[0].split('\n')[0].trim();
                         deployedBadge = `<span class="badge-deployed">⚡ [${tName} 대체운항 중]</span>`;
+
+                        let reserveLines = (v.rawName || '').split('\n').map(l => l.trim()).filter(Boolean);
+                        let reserveHeader = reserveLines[0] || ''; // 예: 천사2호 (364G/T)
+
+                        let targetLines = (v.targetShip.rawName || '').split('\n').map(l => l.trim()).filter(Boolean);
+                        let targetCriteria = targetLines.length > 1 ? targetLines[1] : ''; // 예: (통제기준: 12m/s, 최대파고 2.0m)
+                        let targetSpeedDist = targetLines.length > 2 ? targetLines[2] : ''; // 예: 12kt / 4해리(7.1km) / 18분
+
+                        let combinedLines = [reserveHeader];
+                        if (targetCriteria) combinedLines.push(targetCriteria);
+                        if (targetSpeedDist) combinedLines.push(targetSpeedDist);
+
+                        displayNameText = combinedLines.join('\n');
                     }
+
+                    let vNameHTML = displayNameText.replace(/\n/g, '<br>').replace(/(통제기준:[^)]+\))/g, '<span class="highlight-red">$1</span>');
 
                     let customRowsHtml = "";
                     if (v.customFields && v.customFields.length > 0) {
