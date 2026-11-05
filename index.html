@@ -961,6 +961,9 @@
         let isYulmokRoute = r.includes("율목") || fullText.includes("목포-율목") || fullText.includes("평수구역으로단축운항");
         let isPyungSuOnly = (fullText.includes("(평수)") && !fullText.includes("연해") && !fullText.includes("먼바다")) || isJodoPyungsu;
 
+        // 제주항로 초대형 카페리(퀸제누비아, 퀸제누비아2, 퀸메리) 특별 식별
+        let isJejuMegaShip = (tonnage >= 10000) && (r.includes("제주") || fullText.includes("제주"));
+
         return {
             tonnage: tonnage,
             isCaptainOpinion: isCaptainOpinion,
@@ -973,7 +976,8 @@
             relatedSeas: relatedSeas,
             isPyungSuOnly: isPyungSuOnly,
             isJodoPyungsu: isJodoPyungsu,
-            isYulmokRoute: isYulmokRoute
+            isYulmokRoute: isYulmokRoute,
+            isJejuMegaShip: isJejuMegaShip
         };
     }
 
@@ -1025,7 +1029,8 @@
                 
                 let activeWarningItems = [];
                 let hasRealIssuedWarning = false; 
-                let hasPreWarning = false;         
+                let hasPreWarning = false;
+                let hasGaleGyeongbo = false; // 풍랑경보 발효 여부
 
                 if (parsed.relatedSeas && parsed.relatedSeas.length > 0) {
                     for (let sea of parsed.relatedSeas) {
@@ -1036,6 +1041,9 @@
                                 hasPreWarning = true;
                             } else {
                                 hasRealIssuedWarning = true;
+                                if (alertType.includes('경보')) {
+                                    hasGaleGyeongbo = true;
+                                }
                             }
                         }
                     }
@@ -1047,7 +1055,7 @@
                 let criteriaDisplay = '';
                 let pointDisplay = '';
 
-                // 🚨 오직 정식 '발효'특보일 때만 자동통제! 예비특보는 자동통제하지 않음
+                // 일반 선박(2,000톤 이하)은 주의보 발효 시 자동통제
                 let isAutoControlledByWarning = false;
                 if (hasRealIssuedWarning && parsed.tonnage <= 2000 && !parsed.isPyungSuOnly && !parsed.isYulmokRoute && !isReserve) {
                     isAutoControlledByWarning = true;
@@ -1163,7 +1171,27 @@
                     criteriaDisplay = `풍속 ${wLimit}m/s<br>${waveCritArr.length > 0 ? waveCritArr.join(' / ') : '파고 2.0m'}`;
                 }
 
-                if (isAutoControlledByWarning) {
+                // 🌟 [제주항로 초대형선 (퀸제누비아, 퀸제누비아2, 퀸메리) 특별 판정 로직]
+                // 통제기준(21m/s, 5.0m)이 매우 높으므로 '풍랑경보'를 제외한 일반 주의보/예비특보에서는 통제주의가 되지 않고 '정상' 유지
+                if (parsed.isJejuMegaShip) {
+                    if (hasGaleGyeongbo) {
+                        status = 'danger';
+                        statusBadge = '<span class="status-badge badge-danger">🔴 통제위험(풍랑경보)</span>';
+                        countDanger++;
+                    } else if (isAnyWindDanger || isAnyWaveDanger) {
+                        status = 'danger';
+                        statusBadge = '<span class="status-badge badge-danger">🔴 수치초과(통제위험)</span>';
+                        countDanger++;
+                    } else if (isAnyWindWarn || isAnyWaveWarn) {
+                        status = 'warn';
+                        statusBadge = '<span class="status-badge badge-warn">🟡 기상근접(통제주의)</span>';
+                        countWarn++;
+                    } else {
+                        status = 'ok';
+                        statusBadge = '<span class="status-badge badge-ok">🟢 정상 (대형선/정상운항)</span>';
+                        countOk++;
+                    }
+                } else if (isAutoControlledByWarning) {
                     status = 'danger';
                     statusBadge = '<span class="status-badge badge-danger">🔴 자동통제(특보발효)</span>';
                     countDanger++;
@@ -1199,6 +1227,7 @@
                         countOk++;
                     }
                 } else if (parsed.tonnage > 2000) {
+                    // 산타모니카 등 기타 2,000톤 이상 선박
                     if (isAnyWindDanger || isAnyWaveDanger) {
                         status = 'danger';
                         statusBadge = '<span class="status-badge badge-danger">🔴 수치초과(통제위험)</span>';
@@ -1258,7 +1287,6 @@
                 if (!currentDisplay) currentDisplay = '-';
                 if (!criteriaDisplay) criteriaDisplay = parsed.windLimit ? `풍속 ${parsed.windLimit}m/s` : '-';
 
-                // 🚨 예비특보는 노란색(warning-adv)으로 확실히 분리
                 let warningCellHtml = '<span style="color:#94A3B8; font-weight:bold;">-</span>';
                 if (activeWarningItems.length > 0) {
                     warningCellHtml = activeWarningItems.map(w => {
@@ -1433,7 +1461,6 @@
         fetchWeatherRealtime();
     };
 
-    // 💡 [기상청 JSON 특보 데이터 100% 실측 규격 매핑: LVL 필드 분석]
     function parseWeatherWarnings(rawText) {
         if (!rawText || rawText.includes('AUTH_ERROR') || rawText.includes('SERVICE_ERROR') || rawText.includes('"status" : 401')) return;
         
@@ -1465,13 +1492,11 @@
                     let lvl = (item.LVL || '').replace(/\s/g, ''); // "예비", "주의", "경보"
                     let cmd = (item.CMD || '').replace(/\s/g, '');
 
-                    // 해제 통보는 제외
                     if (cmd.includes('해제') || cmd === '3') return;
 
                     targetSeas.forEach(sea => {
                         let isMatched = sea.codes.includes(regId) || sea.patterns.some(p => regKo.includes(p.replace(/\s/g, '')));
                         if (isMatched) {
-                            // 🚨 [핵심 해결]: LVL이 '예비'이거나 CMD가 '2'이면 무조건 '풍랑예비특보'!
                             if (lvl.includes('예비') || cmd === '2' || wrn.includes('예비') || regKo.includes('예비')) {
                                 activeSeaWarnings[sea.key] = '풍랑예비특보';
                             } else if (lvl.includes('경보') || lvl === '2') {
@@ -1485,7 +1510,6 @@
                 return;
             }
         } catch (e) {
-            // 텍스트 포맷일 때의 안전 Fallback
             const lines = rawText.split('\n');
             let currentMode = 'NONE';
 
@@ -1534,7 +1558,6 @@
         }
     }
 
-    // 💡 [실제 CSV 부이 데이터 1:1 매핑]
     window.fetchWeatherRealtime = async (isAuto = false) => {
         let authKey = localStorage.getItem("kma_apihub_authkey") || DEFAULT_KMA_AUTHKEY;
         const recvEl = document.getElementById('weather-last-updated');
