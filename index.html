@@ -69,6 +69,7 @@
         .btn-hide-act { background: #475569; color: white; }
         .btn-unhide-act { background: #10B981; color: white; }
         .btn-del-act { background: #DC2626; color: white; }
+        .btn-deploy-act { background: #8B5CF6; color: white; }
 
         /* 실시간 운항상황판 대시보드 */
         #board-section { display: none; }
@@ -127,6 +128,8 @@
         .badge-danger { background: #FEE2E2; color: #991B1B; }
         .badge-captain { background: #E0E7FF; color: #3730A3; }
         .badge-office { background: #F1F5F9; color: #475569; }
+        .badge-off { background: #E2E8F0; color: #64748B; }
+        .badge-deployed { background: #EDE9FE; color: #6D28D9; border: 1px solid #DDD6FE; font-size: 11px; padding: 2px 6px; border-radius: 4px; margin-left: 4px; }
 
         .board-filter-group { display: flex; gap: 6px; margin-bottom: 12px; overflow-x: auto; padding-bottom: 4px; }
         .board-filter-btn { padding: 6px 12px; border-radius: 20px; border: 1px solid #CBD5E1; background: white; font-size: 12px; font-weight: bold; color: #475569; cursor: pointer; white-space: nowrap; }
@@ -139,6 +142,18 @@
         .board-table td { padding: 10px 8px; font-size: 12px; border-bottom: 1px solid #E2E8F0; }
         .board-table tr:hover { background: #F8FAFC; }
         .board-table tr.reserve-row { background: #FFF7ED; }
+        .board-table tr.deployed-row { background: #F5F3FF; }
+        .board-table tr.resting-row { background: #F8FAFC; opacity: 0.65; }
+
+        .btn-table-deploy {
+            background: #8B5CF6; color: white; border: none; padding: 4px 8px; border-radius: 4px;
+            font-size: 11px; font-weight: bold; cursor: pointer; margin-left: 6px;
+        }
+        .btn-table-deploy:hover { background: #7C3AED; }
+        .btn-table-reset {
+            background: #64748B; color: white; border: none; padding: 4px 8px; border-radius: 4px;
+            font-size: 11px; font-weight: bold; cursor: pointer; margin-left: 6px;
+        }
 
         .warn-alert-badge { display: inline-block; background: #EF4444; color: white; padding: 3px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; margin-bottom: 2px; }
         .warn-alert-badge.warning-adv { background: #F59E0B; }
@@ -270,7 +285,7 @@
         .edit-box h3 { margin: 0 0 12px 0; font-size: 1.1rem; color: #0f172a; border-bottom: 2px solid #0284c7; padding-bottom: 8px; }
         .form-group { margin-bottom: 12px; }
         .form-group label { display: block; font-size: 12px; font-weight: bold; color: #475569; margin-bottom: 3px; }
-        .form-group input[type="text"], .form-group textarea { width: 100%; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 5px; font-size: 13px; box-sizing: border-box; outline: none; font-family: inherit; }
+        .form-group select, .form-group input[type="text"], .form-group textarea { width: 100%; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 5px; font-size: 13px; box-sizing: border-box; outline: none; font-family: inherit; }
         .custom-fields-box { background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 8px; padding: 12px; margin-top: 14px; }
         .custom-field-row { display: flex; gap: 6px; margin-bottom: 8px; align-items: center; }
         .custom-field-key { width: 35%; padding: 7px 8px; border: 1px solid #CBD5E1; border-radius: 5px; font-size: 12px; box-sizing: border-box; font-weight: bold; }
@@ -405,9 +420,9 @@
             <thead>
                 <tr>
                     <th style="width: 11%;">항로</th>
-                    <th style="width: 12%;">선명</th>
+                    <th style="width: 14%;">선명</th>
                     <th style="width: 17%;">참조 관측소 (부이 / AWS / 등표)</th>
-                    <th style="width: 25%;">현재 기상 관측치 (풍향·풍속 / 파고)</th>
+                    <th style="width: 23%;">현재 기상 관측치 (풍향·풍속 / 파고)</th>
                     <th style="width: 11%;">선박 통제기준</th>
                     <th style="width: 12%;">운항 가능성</th>
                     <th style="width: 12%;">풍랑특보 현황</th>
@@ -419,6 +434,36 @@
 
     <!-- [모바일 전용 카드 뷰] -->
     <div class="board-mobile-container" id="board-mobile-cards"></div>
+</div>
+
+<!-- 예비선 대체 투입 모달 -->
+<div id="deploy-modal" class="app-modal">
+    <div class="edit-box" style="max-width:440px;">
+        <h3 style="border-bottom-color:#8B5CF6;">🚢 예비선 대체 투입 설정</h3>
+        <input type="hidden" id="deploy-ship-code">
+        
+        <div style="font-size:13px; font-weight:bold; color:#1E293B; margin-bottom:12px;">
+            대상 예비선: <span id="deploy-ship-name" style="color:#8B5CF6;"></span>
+        </div>
+
+        <div class="form-group">
+            <label>대체 투입할 본선(항로) 선택</label>
+            <select id="deploy-target-select"></select>
+        </div>
+
+        <div style="font-size:12px; color:#64748B; background:#F8FAFC; padding:10px; border-radius:6px; line-height:1.6; margin-top:10px;">
+            💡 <strong>승계 원칙 안내:</strong><br>
+            • <strong>고유 제원 유지:</strong> 예비선 본래의 톤수(G/T)와 여객정원은 그대로 유지됩니다.<br>
+            • <strong>기상 기준 승계:</strong> 선택한 본선의 통제기준(풍속/파고), 참조 관측계소, 관할 특보구역을 100% 이어받아 상황판에 실시간 반영됩니다.<br>
+            • <strong>피대체선 처리:</strong> 원래 본선은 상황판에서 <em>[휴항/정비]</em> 상태로 자동 전환됩니다.
+        </div>
+
+        <div class="edit-actions" style="margin-top:16px;">
+            <button class="btn-cancel" onclick="closeDeployModal()">취소</button>
+            <button class="btn-action" style="background:#EF4444; color:white;" id="btn-deploy-reset" onclick="saveDeployStatus(null)">투입 해제 (복귀)</button>
+            <button class="btn-save" style="background:#8B5CF6;" onclick="executeDeploySave()">대체 투입 확정</button>
+        </div>
+    </div>
 </div>
 
 <!-- 전국 기상특보 통보문 원본 모달 -->
@@ -961,7 +1006,6 @@
         let isYulmokRoute = r.includes("율목") || fullText.includes("목포-율목") || fullText.includes("평수구역으로단축운항");
         let isPyungSuOnly = (fullText.includes("(평수)") && !fullText.includes("연해") && !fullText.includes("먼바다")) || isJodoPyungsu;
 
-        // 제주항로 초대형 카페리(퀸제누비아, 퀸제누비아2, 퀸메리) 특별 식별
         let isJejuMegaShip = (tonnage >= 10000) && (r.includes("제주") || fullText.includes("제주"));
 
         return {
@@ -981,11 +1025,13 @@
         };
     }
 
+    // 💡 [실시간 운항상황판 렌더링 - 예비선 동적 승계 엔진 적용]
     function renderOperationBoard() {
         const tbody = document.getElementById('board-tbody');
         const mobileContainer = document.getElementById('board-mobile-cards');
         if (!tbody || !mobileContainer) return;
 
+        // [1] 선박 원본 데이터 통합 목록 구축
         let combined = [];
         baseShipData.forEach((d, idx) => {
             let code = d[1] || `idx_${idx}`;
@@ -996,19 +1042,44 @@
             let route = override.route !== undefined ? override.route : d[2];
             let decision = override.decision !== undefined ? override.decision : d[7];
             let notes = override.notes !== undefined ? override.notes : d[5];
-            combined.push({ code: code, rawName: rawName, route: route, decision: decision, notes: notes });
+            let deployedTarget = override.deployedTarget || null;
+
+            combined.push({
+                code: code,
+                rawName: rawName,
+                route: route,
+                decision: decision,
+                notes: notes,
+                deployedTarget: deployedTarget
+            });
         });
 
         customAddedShips.forEach(s => {
             if (s.isDeleted || s.isHidden) return;
-            combined.push({ code: s.id, rawName: s.rawName, route: s.route, decision: s.decision, notes: s.notes || '' });
+            combined.push({
+                code: s.id,
+                rawName: s.rawName,
+                route: s.route,
+                decision: s.decision,
+                notes: s.notes || '',
+                deployedTarget: s.deployedTarget || null
+            });
         });
 
+        // [2] 대체 투입된 대상(피대체선) 맵 구성
+        let deployedMap = {}; // 피대체선 code -> 투입된 예비선 정보
+        combined.forEach(s => {
+            if (s.deployedTarget) {
+                deployedMap[s.deployedTarget] = s;
+            }
+        });
+
+        // [3] 정렬: 정규항로 가나다순, 미투입 예비선은 맨 뒤로 배치
         combined.sort((a, b) => {
-            let aReserve = (a.route || '').trim() === '예비선';
-            let bReserve = (b.route || '').trim() === '예비선';
-            if (aReserve && !bReserve) return 1;
-            if (!aReserve && bReserve) return -1;
+            let aIsReserveOnly = ((a.route || '').trim() === '예비선') && !a.deployedTarget;
+            let bIsReserveOnly = ((b.route || '').trim() === '예비선') && !b.deployedTarget;
+            if (aIsReserveOnly && !bIsReserveOnly) return 1;
+            if (!aIsReserveOnly && bIsReserveOnly) return -1;
             return (a.route || '').localeCompare(b.route || '', 'ko');
         });
 
@@ -1024,13 +1095,59 @@
         combined.forEach(ship => {
             try {
                 let cleanName = (ship.rawName || '').split('(')[0].split('\n')[0].trim();
-                let parsed = parseVesselControlCriteria(ship.rawName, ship.decision, ship.route, ship.notes);
-                let isReserve = (ship.route || '').trim() === '예비선';
+                let isOriginalReserve = (ship.route || '').trim() === '예비선';
+                let isDeployedReserve = isOriginalReserve && !!ship.deployedTarget;
+                let targetShip = isDeployedReserve ? combined.find(s => s.code === ship.deployedTarget) : null;
+                let isRestingBySub = !!deployedMap[ship.code]; // 다른 예비선이 대신 투입되어 쉬는 본선
+                let substituteShip = isRestingBySub ? deployedMap[ship.code] : null;
+
+                // 💡 [핵심]: 예비선 자체 고유 제원(톤수) 파싱
+                let ownParsed = parseVesselControlCriteria(ship.rawName, ship.decision, ship.route, ship.notes);
                 
+                // 💡 [핵심 승계 로직]:
+                // 대체 투입된 예비선이면: 톤수는 '자체 톤수' 유지, 기상/관측계소/통제기준/항로는 '본선' 것 승계!
+                let parsed = ownParsed;
+                let effectiveRoute = ship.route;
+
+                if (isDeployedReserve && targetShip) {
+                    let targetParsed = parseVesselControlCriteria(targetShip.rawName, targetShip.decision, targetShip.route, targetShip.notes);
+                    effectiveRoute = targetShip.route; // 항로 승계
+                    parsed = {
+                        tonnage: ownParsed.tonnage, // 예비선 고유 톤수 보존
+                        isCaptainOpinion: targetParsed.isCaptainOpinion, // 본선 통제방식 승계
+                        isOfficeDecision: targetParsed.isOfficeDecision,
+                        officeName: targetParsed.officeName,
+                        stations: targetParsed.stations, // 본선 관측계소 승계
+                        windLimit: targetParsed.windLimit, // 본선 통제기준 승계
+                        sigWaveLimit: targetParsed.sigWaveLimit,
+                        maxWaveLimit: targetParsed.maxWaveLimit,
+                        relatedSeas: targetParsed.relatedSeas, // 본선 특보구역 승계
+                        isPyungSuOnly: targetParsed.isPyungSuOnly,
+                        isJodoPyungsu: targetParsed.isJodoPyungsu,
+                        isYulmokRoute: targetParsed.isYulmokRoute,
+                        isJejuMegaShip: false
+                    };
+                }
+
+                // 피대체선(쉬는 본선) 처리
+                if (isRestingBySub) {
+                    let subCleanName = (substituteShip.rawName || '').split('(')[0].split('\n')[0].trim();
+                    rowsHtml += `
+                        <tr class="resting-row">
+                            <td><strong>${ship.route}</strong></td>
+                            <td><strong>${cleanName}</strong> <span style="font-size:11px; color:#64748B;">(${ownParsed.tonnage ? ownParsed.tonnage + 'G/T' : '-'})</span></td>
+                            <td colspan="3" style="text-align:center; color:#64748B;">대체선 [${subCleanName}] 투입에 따른 운항정지 및 정비</td>
+                            <td><span class="status-badge badge-off">⚪ 휴항/정비 (${subCleanName} 대선)</span></td>
+                            <td style="color:#94A3B8;">-</td>
+                        </tr>
+                    `;
+                    return;
+                }
+
                 let activeWarningItems = [];
                 let hasRealIssuedWarning = false; 
                 let hasPreWarning = false;
-                let hasGaleGyeongbo = false; // 풍랑경보 발효 여부
+                let hasGaleGyeongbo = false;
 
                 if (parsed.relatedSeas && parsed.relatedSeas.length > 0) {
                     for (let sea of parsed.relatedSeas) {
@@ -1055,9 +1172,8 @@
                 let criteriaDisplay = '';
                 let pointDisplay = '';
 
-                // 일반 선박(2,000톤 이하)은 주의보 발효 시 자동통제
                 let isAutoControlledByWarning = false;
-                if (hasRealIssuedWarning && parsed.tonnage <= 2000 && !parsed.isPyungSuOnly && !parsed.isYulmokRoute && !isReserve) {
+                if (hasRealIssuedWarning && parsed.tonnage <= 2000 && !parsed.isPyungSuOnly && !parsed.isYulmokRoute && (!isOriginalReserve || isDeployedReserve)) {
                     isAutoControlledByWarning = true;
                 }
 
@@ -1171,8 +1287,6 @@
                     criteriaDisplay = `풍속 ${wLimit}m/s<br>${waveCritArr.length > 0 ? waveCritArr.join(' / ') : '파고 2.0m'}`;
                 }
 
-                // 🌟 [제주항로 초대형선 (퀸제누비아, 퀸제누비아2, 퀸메리) 특별 판정 로직]
-                // 통제기준(21m/s, 5.0m)이 매우 높으므로 '풍랑경보'를 제외한 일반 주의보/예비특보에서는 통제주의가 되지 않고 '정상' 유지
                 if (parsed.isJejuMegaShip) {
                     if (hasGaleGyeongbo) {
                         status = 'danger';
@@ -1227,7 +1341,6 @@
                         countOk++;
                     }
                 } else if (parsed.tonnage > 2000) {
-                    // 산타모니카 등 기타 2,000톤 이상 선박
                     if (isAnyWindDanger || isAnyWaveDanger) {
                         status = 'danger';
                         statusBadge = '<span class="status-badge badge-danger">🔴 수치초과(통제위험)</span>';
@@ -1301,11 +1414,31 @@
                 if (boardFilterMode === 'special' && (status !== 'captain' && status !== 'office')) isFiltered = true;
                 if (boardFilterMode === 'ok' && status !== 'ok') isFiltered = true;
 
+                // 예비선 투입 조작 버튼 및 뱃지
+                let deployBtnHtml = "";
+                let deployedBadgeHtml = "";
+
+                if (isOriginalReserve) {
+                    if (isDeployedReserve && targetShip) {
+                        let targetName = (targetShip.rawName || '').split('(')[0].split('\n')[0].trim();
+                        deployedBadgeHtml = `<span class="badge-deployed">⚡ ${targetName} 대선투입</span>`;
+                        deployBtnHtml = `<button class="btn-table-reset" onclick="openDeployModal('${ship.code}')">대선해제</button>`;
+                    } else {
+                        deployBtnHtml = `<button class="btn-table-deploy" onclick="openDeployModal('${ship.code}')">대체투입</button>`;
+                    }
+                }
+
                 if (!isFiltered) {
+                    let rowClass = isDeployedReserve ? 'deployed-row' : (isOriginalReserve ? 'reserve-row' : '');
                     rowsHtml += `
-                        <tr class="${isReserve ? 'reserve-row' : ''}">
-                            <td><strong>${ship.route}</strong></td>
-                            <td><strong>${cleanName}</strong> <span style="font-size:11px; color:#64748B;">(${parsed.tonnage ? parsed.tonnage + 'G/T' : '-'})</span></td>
+                        <tr class="${rowClass}">
+                            <td><strong>${effectiveRoute}</strong></td>
+                            <td>
+                                <strong>${cleanName}</strong> 
+                                <span style="font-size:11px; color:#64748B;">(${ownParsed.tonnage ? ownParsed.tonnage + 'G/T' : '-'})</span>
+                                ${deployedBadgeHtml}
+                                ${deployBtnHtml}
+                            </td>
                             <td>${pointDisplay}</td>
                             <td>${currentDisplay}</td>
                             <td style="color:#475569;">${criteriaDisplay}</td>
@@ -1314,19 +1447,19 @@
                         </tr>
                     `;
 
-                    let rKey = ship.route || '기타항로';
+                    let rKey = effectiveRoute || '기타항로';
                     if (!mobileGroups[rKey]) {
                         mobileGroups[rKey] = {
                             route: rKey,
-                            isReserve: isReserve,
+                            isReserve: (rKey === '예비선'),
                             warnings: activeWarningItems,
                             meteoSummary: mobileMeteoItems.join(' · ') || '현장/파견지 확인',
                             ships: []
                         };
                     }
                     mobileGroups[rKey].ships.push({
-                        name: cleanName,
-                        tonnage: parsed.tonnage,
+                        name: cleanName + (isDeployedReserve && targetShip ? ` [대선: ${(targetShip.rawName||'').split('(')[0].trim()}]` : ''),
+                        tonnage: ownParsed.tonnage,
                         statusBadge: statusBadge,
                         criteriaText: criteriaDisplay.replace('<br>', ' · ')
                     });
@@ -1391,6 +1524,81 @@
 
         mobileContainer.innerHTML = mobileCardsHtml || `<div style="text-align:center; padding:20px; color:#94A3B8; background:white; border-radius:8px;">해당 조건에 일치하는 선박이 없습니다.</div>`;
     }
+
+    // 💡 [예비선 대체 투입 팝업 모달 제어 함수]
+    window.openDeployModal = (reserveCode) => {
+        const reserveShip = baseShipData.find(s => s[1] === reserveCode) || customAddedShips.find(s => s.id === reserveCode);
+        if (!reserveShip) return;
+
+        let override = cloudCustomData[reserveCode] || {};
+        let rName = (override.rawName || (Array.isArray(reserveShip) ? reserveShip[0] : reserveShip.rawName)).split('(')[0].split('\n')[0].trim();
+
+        document.getElementById('deploy-ship-code').value = reserveCode;
+        document.getElementById('deploy-ship-name').innerText = `${rName} (${reserveCode})`;
+
+        // 대체 대상 본선 목록 구성 (예비선 제외)
+        const selectEl = document.getElementById('deploy-target-select');
+        selectEl.innerHTML = '';
+
+        let regularShips = [];
+        baseShipData.forEach(s => {
+            let code = s[1];
+            let ov = cloudCustomData[code] || {};
+            let route = ov.route !== undefined ? ov.route : s[2];
+            let name = (ov.rawName !== undefined ? ov.rawName : s[0]).split('(')[0].split('\n')[0].trim();
+            if (route.trim() !== '예비선') {
+                regularShips.push({ code: code, name: name, route: route });
+            }
+        });
+
+        customAddedShips.forEach(s => {
+            if ((s.route || '').trim() !== '예비선') {
+                regularShips.push({ code: s.id, name: s.rawName.split('(')[0].trim(), route: s.route });
+            }
+        });
+
+        regularShips.sort((a, b) => a.route.localeCompare(b.route, 'ko'));
+
+        regularShips.forEach(rs => {
+            let opt = document.createElement('option');
+            opt.value = rs.code;
+            opt.innerText = `[${rs.route}] ${rs.name}`;
+            if (override.deployedTarget === rs.code) {
+                opt.selected = true;
+            }
+            selectEl.appendChild(opt);
+        });
+
+        document.getElementById('btn-deploy-reset').style.display = override.deployedTarget ? 'inline-block' : 'none';
+        document.getElementById('deploy-modal').style.display = 'flex';
+    };
+
+    window.closeDeployModal = () => {
+        document.getElementById('deploy-modal').style.display = 'none';
+    };
+
+    window.executeDeploySave = () => {
+        let targetCode = document.getElementById('deploy-target-select').value;
+        saveDeployStatus(targetCode);
+    };
+
+    window.saveDeployStatus = async (targetCode) => {
+        let reserveCode = document.getElementById('deploy-ship-code').value;
+        if (!reserveCode) return;
+
+        try {
+            await db.collection("vessel_overrides").doc(reserveCode).set({
+                deployedTarget: targetCode || null,
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
+
+            closeDeployModal();
+            let msg = targetCode ? "예비선이 해당 항로에 성공적으로 대체 투입되었습니다!" : "예비선 투입이 해제되어 대기 상태로 복귀했습니다.";
+            alert(msg);
+        } catch (err) {
+            alert("저장 실패: " + err.message);
+        }
+    };
 
     window.filterBoard = (mode, btnEl) => {
         boardFilterMode = mode;
@@ -1461,6 +1669,7 @@
         fetchWeatherRealtime();
     };
 
+    // 💡 [실제 검증 완료된 기상청 특보 JSON 파싱 로직 원형 보존]
     function parseWeatherWarnings(rawText) {
         if (!rawText || rawText.includes('AUTH_ERROR') || rawText.includes('SERVICE_ERROR') || rawText.includes('"status" : 401')) return;
         
@@ -1558,6 +1767,7 @@
         }
     }
 
+    // 💡 [실시간 기상관측 원천 데이터 매핑 - 100% 원형 유지]
     window.fetchWeatherRealtime = async (isAuto = false) => {
         let authKey = localStorage.getItem("kma_apihub_authkey") || DEFAULT_KMA_AUTHKEY;
         const recvEl = document.getElementById('weather-last-updated');
@@ -1843,6 +2053,7 @@
                     customFields: override.customFields || [],
                     timetables: override.timetables || [],
                     isHidden: !!override.isHidden,
+                    deployedTarget: override.deployedTarget || null,
                     cloudPhoto: photoUrl
                 });
             });
@@ -1863,6 +2074,7 @@
                     customFields: s.customFields || [],
                     timetables: s.timetables || [],
                     isHidden: !!s.isHidden,
+                    deployedTarget: s.deployedTarget || null,
                     cloudPhoto: photoUrl
                 });
             });
@@ -1916,6 +2128,8 @@
                         });
                     }
 
+                    let deployBtnHtml = isReserve ? `<button class="btn-action btn-deploy-act" onclick="openDeployModal('${v.code}')">🚢 대체투입 설정</button>` : '';
+
                     groupHtml += `<div class="vessel-card ${isReserve ? 'reserve' : ''} ${v.isHidden ? 'is-hidden' : ''}">
                         <div class="vessel-header" onclick="toggleVessel(this, '${cleanName}', '${uId}', '${v.code}')">
                             <div class="vessel-name">${vNameHTML} ${v.isHidden ? '<span class="badge-hidden">선박 숨김</span>' : ''}</div>
@@ -1951,6 +2165,7 @@
                             <div id="car-btn-3-${uId}" class="btn-car-v2">🚗 차량적재도 참고자료 3</div>
 
                             <div class="admin-btn-group">
+                                ${deployBtnHtml}
                                 <button class="btn-action btn-edit-act" onclick="openEditModal('${v.code}')">✏️ 정보 및 사진 수정</button>
                                 ${v.isHidden ? 
                                     `<button class="btn-action btn-unhide-act" onclick="toggleHideShip('${v.code}', false)">👁️ 숨김 해제</button>` : 
