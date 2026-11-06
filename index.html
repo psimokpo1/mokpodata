@@ -130,7 +130,6 @@
         .badge-captain { background: #E0E7FF; color: #3730A3; }
         .badge-office { background: #F1F5F9; color: #475569; }
         .badge-off { background: #E2E8F0; color: #64748B; }
-        .badge-deployed { background: #EDE9FE; color: #6D28D9; border: 1px solid #DDD6FE; font-size: 11px; padding: 2px 6px; border-radius: 4px; margin-left: 4px; }
 
         .board-filter-group { display: flex; gap: 6px; margin-bottom: 12px; overflow-x: auto; padding-bottom: 4px; }
         .board-filter-btn { padding: 6px 12px; border-radius: 20px; border: 1px solid #CBD5E1; background: white; font-size: 12px; font-weight: bold; color: #475569; cursor: pointer; white-space: nowrap; }
@@ -142,19 +141,7 @@
         .board-table th { background: #334155; color: white; padding: 11px 8px; font-size: 12px; text-align: left; }
         .board-table td { padding: 10px 8px; font-size: 12px; border-bottom: 1px solid #E2E8F0; }
         .board-table tr:hover { background: #F8FAFC; }
-        .board-table tr.reserve-row { background: #FFF7ED; }
-        .board-table tr.deployed-row { background: #F5F3FF; }
         .board-table tr.resting-row { background: #F8FAFC; opacity: 0.65; }
-
-        .btn-table-deploy {
-            background: #8B5CF6; color: white; border: none; padding: 4px 8px; border-radius: 4px;
-            font-size: 11px; font-weight: bold; cursor: pointer; margin-left: 6px;
-        }
-        .btn-table-deploy:hover { background: #7C3AED; }
-        .btn-table-reset {
-            background: #64748B; color: white; border: none; padding: 4px 8px; border-radius: 4px;
-            font-size: 11px; font-weight: bold; cursor: pointer; margin-left: 6px;
-        }
 
         .warn-alert-badge { display: inline-block; background: #EF4444; color: white; padding: 3px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; margin-bottom: 2px; }
         .warn-alert-badge.warning-adv { background: #F59E0B; }
@@ -173,10 +160,6 @@
             box-shadow: 0 2px 8px rgba(0,0,0,0.06);
             border: 1px solid #E2E8F0;
             overflow: hidden;
-        }
-        .m-route-card.reserve {
-            border-top: 4px solid #D84315;
-            background: #FFFDFB;
         }
 
         .m-route-header {
@@ -457,7 +440,7 @@
             • <strong>고유 제원 유지:</strong> 예비선 본래의 톤수(G/T)와 여객정원은 그대로 유지됩니다.<br>
             • <strong>기상/항해제원 승계:</strong> 선택한 본선의 통제기준, 관측계소, 관할 특보구역, 선속·거리·시간을 100% 승계받습니다.<br>
             • <strong>항로 영구 유지:</strong> 본선을 '선박 숨기기' 처리하더라도 예비선이 그 항로를 온전히 계승하므로 <strong>상황판과 기초자료에서 항로가 절대 사라지지 않습니다.</strong><br>
-            • <strong>미투입 예비선 정리:</strong> 대체 투입되지 않은 대기 예비선은 상황판에서 자동 제외되어 상황판이 깔끔하게 유지됩니다.
+            • <strong>깔끔한 관제 화면:</strong> 실시간 운항상황판에는 관제에 불필요한 라벨 및 해제 버튼을 생략하여 선명과 제원만 깔끔하게 표출됩니다.
         </div>
 
         <div class="edit-actions" style="margin-top:16px;">
@@ -1027,13 +1010,12 @@
         };
     }
 
-    // 💡 [실시간 운항상황판 렌더링 - 3대 개선사항 완전 적용]
+    // 💡 [실시간 운항상황판 렌더링 - 대선 라벨 및 버튼 완전 제거 & 깔끔한 선명 단독 표출]
     function renderOperationBoard() {
         const tbody = document.getElementById('board-tbody');
         const mobileContainer = document.getElementById('board-mobile-cards');
         if (!tbody || !mobileContainer) return;
 
-        // 1. 전체 선박 맵 구성 (본선이 숨김 처리되어도 제원 승계를 위해 참조)
         let allShipsMap = {};
         baseShipData.forEach((d, idx) => {
             let code = (d[1] || `idx_${idx}`).trim();
@@ -1064,7 +1046,6 @@
             };
         });
 
-        // 2. 피대체 본선 매핑
         let deployedMap = {};
         for (let c in allShipsMap) {
             let s = allShipsMap[c];
@@ -1073,11 +1054,7 @@
             }
         }
 
-        // 3. 상황판 표출 대상 선별
-        // [규칙 1]: 삭제된 선박 제외
-        // [규칙 2]: 미투입 예비선(deployedTarget === null)은 상황판 표출 완전 제외 (3번 요구사항)
-        // [규칙 3]: 대체 투입된 예비선은 본선 숨김 여부와 무관하게 무조건 표출 (1번, 2번 요구사항)
-        // [규칙 4]: 정규 본선 중 숨김 처리된 선박은 상황판 표출 제외
+        // 미투입 예비선 및 숨김 본선은 상황판에서 제외
         let displayList = [];
         for (let c in allShipsMap) {
             let s = allShipsMap[c];
@@ -1086,20 +1063,12 @@
             let isOriginalReserve = (s.route || '').trim() === '예비선';
             let isDeployedReserve = isOriginalReserve && !!s.deployedTarget;
 
-            // 미투입 예비선은 상황판에서 제거
-            if (isOriginalReserve && !isDeployedReserve) {
-                continue;
-            }
-
-            // 본선이 숨김 처리된 경우 본선 자체는 상황판에서 숨김
-            if (s.isHidden && !isDeployedReserve) {
-                continue;
-            }
+            if (isOriginalReserve && !isDeployedReserve) continue;
+            if (s.isHidden && !isDeployedReserve) continue;
 
             displayList.push(s);
         }
 
-        // 4. 정렬: 승계받은 실제 운항 항로명 가나다순
         displayList.sort((a, b) => {
             let aTarget = a.deployedTarget ? allShipsMap[a.deployedTarget] : null;
             let bTarget = b.deployedTarget ? allShipsMap[b.deployedTarget] : null;
@@ -1130,10 +1099,9 @@
                 let parsed = ownParsed;
                 let effectiveRoute = ship.route;
 
-                // 💡 [대선 승계 엔진]: 본선 숨김 여부 무관하게 본선의 항로/기상기준/제원 승계
                 if (isDeployedReserve && targetShip) {
                     let targetParsed = parseVesselControlCriteria(targetShip.rawName, targetShip.decision, targetShip.route, targetShip.notes);
-                    effectiveRoute = targetShip.route; // 본선의 항로(예: 목포-외달, 송도-병풍)로 변경!
+                    effectiveRoute = targetShip.route;
                     parsed = {
                         tonnage: ownParsed.tonnage,
                         isCaptainOpinion: targetParsed.isCaptainOpinion,
@@ -1151,7 +1119,6 @@
                     };
                 }
 
-                // 본선이 숨겨지지 않은 상태에서 대선이 들어온 경우 '휴항/정비' 행 노출
                 if (isRestingBySub && !ship.isHidden) {
                     let subCleanName = (substituteShip.rawName || '').split('(')[0].split('\n')[0].trim();
                     rowsHtml += `
@@ -1447,25 +1414,14 @@
                 if (boardFilterMode === 'special' && (status !== 'captain' && status !== 'office')) isFiltered = true;
                 if (boardFilterMode === 'ok' && status !== 'ok') isFiltered = true;
 
-                let deployBtnHtml = "";
-                let deployedBadgeHtml = "";
-
-                if (isOriginalReserve) {
-                    let targetName = targetShip ? (targetShip.rawName || '').split('(')[0].split('\n')[0].trim() : '본선';
-                    deployedBadgeHtml = `<span class="badge-deployed">⚡ ${targetName} 대선투입</span>`;
-                    deployBtnHtml = `<button class="btn-table-reset" onclick="openDeployModal('${ship.code}')">대선해제</button>`;
-                }
-
+                // 💡 [요청사항 반영]: 상황판에서 '대선투입 뱃지'와 '대선해제 버튼'을 완전히 비워 깔끔하게 단독 표출
                 if (!isFiltered) {
-                    let rowClass = isDeployedReserve ? 'deployed-row' : '';
                     rowsHtml += `
-                        <tr class="${rowClass}">
+                        <tr>
                             <td><strong>${effectiveRoute}</strong></td>
                             <td>
                                 <strong>${cleanName}</strong> 
                                 <span style="font-size:11px; color:#64748B;">(${ownParsed.tonnage ? ownParsed.tonnage + 'G/T' : '-'})</span>
-                                ${deployedBadgeHtml}
-                                ${deployBtnHtml}
                             </td>
                             <td>${pointDisplay}</td>
                             <td>${currentDisplay}</td>
@@ -1486,7 +1442,7 @@
                         };
                     }
                     mobileGroups[rKey].ships.push({
-                        name: cleanName + (isDeployedReserve && targetShip ? ` [대선: ${(targetShip.rawName||'').split('(')[0].trim()}]` : ''),
+                        name: cleanName,
                         tonnage: ownParsed.tonnage,
                         statusBadge: statusBadge,
                         criteriaText: criteriaDisplay.replace('<br>', ' · ')
@@ -2055,7 +2011,6 @@
         try {
             const showHidden = document.getElementById('showHiddenToggle').checked;
 
-            // 1. 전체 선박 맵 구축
             let allMap = {};
             baseShipData.forEach((d, idx) => {
                 let code = (d[1] || `idx_${idx}`).trim();
@@ -2103,7 +2058,6 @@
                 };
             });
 
-            // 2. 표출 대상 리스트 구성
             let visibleShips = [];
             for (let c in allMap) {
                 let s = allMap[c];
@@ -2112,7 +2066,6 @@
                 let isOriginalReserve = (s.route || '').trim() === '예비선';
                 let isDeployedReserve = isOriginalReserve && !!s.deployedTarget;
 
-                // 숨김 선박이지만 대체 투입된 예비선은 항상 표시, 본선은 토글에 따름
                 if (s.isHidden && !showHidden && !isDeployedReserve) {
                     continue;
                 }
