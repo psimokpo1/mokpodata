@@ -1669,7 +1669,6 @@
 
             if (items.length > 0) {
                 items.forEach(item => {
-                    let regId = String(item.REG_ID || '').trim();
                     let regKo = String(item.REG_KO || item.REG_NAME || '').replace(/\s/g, '');
                     let wrn = String(item.WRN || '').replace(/\s/g, '');
                     let lvl = String(item.LVL || '').replace(/\s/g, '');
@@ -1737,6 +1736,7 @@
         }
     }
 
+    // 💡 [인코딩 안정화: EUC-KR과 UTF-8을 자동 감지하여 글자 깨짐 완전 방지]
     async function fetchKmaApi(type, authKey) {
         try {
             const url = `/api/kma?type=${type}&authKey=${encodeURIComponent(authKey)}&_t=${Date.now()}`;
@@ -1744,9 +1744,19 @@
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             
             const buffer = await response.arrayBuffer();
-            const encoding = (type === 'warn') ? 'utf-8' : 'euc-kr';
-            const decoder = new TextDecoder(encoding);
-            const text = decoder.decode(buffer);
+            let text = "";
+            try {
+                // 1차 시도: EUC-KR 디코딩 (기상청 API 허브 표준)
+                const decoderEuc = new TextDecoder('euc-kr');
+                text = decoderEuc.decode(buffer);
+                if (text.includes('')) {
+                    throw new Error("깨짐 발생");
+                }
+            } catch (decErr) {
+                // 2차 시도: UTF-8 디코딩
+                const decoderUtf = new TextDecoder('utf-8');
+                text = decoderUtf.decode(buffer);
+            }
             
             if (text.includes('"status"') && (text.includes('401') || text.includes('403') || text.includes('404'))) {
                 throw new Error(`기상청 거절: ${text}`);
