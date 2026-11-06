@@ -1652,7 +1652,7 @@
         fetchWeatherRealtime();
     };
 
-    // 💡 [기상특보 파싱 엔진 - 상단 요약블록 엄격 분리 및 하단 설명문 원천 배제]
+    // 💡 [기상특보 파싱 엔진 - 실제 수신 JSON 형식 및 REG_KO 풀네임 기반 완벽 매칭]
     function parseWeatherWarnings(rawText) {
         if (!rawText || rawText.includes('AUTH_ERROR') || rawText.includes('SERVICE_ERROR') || rawText.includes('"status" : 401')) return;
         
@@ -1662,17 +1662,7 @@
             activeSeaWarnings[k] = null;
         }
 
-        const targetSeas = [
-            { key: '서해남부북쪽안쪽먼바다', codes: ['S1232110'], patterns: ['서해남부북쪽안쪽먼바다'] },
-            { key: '서해남부남쪽안쪽먼바다', codes: ['S1232210', 'S1232220'], patterns: ['서해남부남쪽안쪽먼바다', '서해남부남쪽바깥먼바다'] },
-            { key: '서해남부앞바다(전남중부)', codes: ['S1231200'], patterns: ['전남중부서해앞바다', '서해남부앞바다(전남중부서해앞바다)', '전남중부앞바다'] },
-            { key: '서해남부앞바다(전남남부)', codes: ['S1231300'], patterns: ['전남남부서해앞바다', '서해남부앞바다(전남남부서해앞바다)', '전남남부앞바다'] },
-            { key: '서해남부앞바다(전남북부)', codes: ['S1231100'], patterns: ['전남북부서해앞바다', '서해남부앞바다(전남북부서해앞바다)', '전남북부앞바다'] },
-            { key: '남해서부서쪽먼바다', codes: ['S1322100'], patterns: ['남해서부서쪽먼바다'] },
-            { key: '제주도북부앞바다', codes: ['S1323100'], patterns: ['제주도북부앞바다'] }
-        ];
-
-        // 1. JSON 형태의 API 응답 처리
+        // 1. 실제 기상청 JSON 응답 우선 처리
         try {
             let data = JSON.parse(rawText);
             let items = Array.isArray(data) ? data : (data.items || data.result || []);
@@ -1685,69 +1675,65 @@
                     let lvl = String(item.LVL || '').replace(/\s/g, '');
                     let cmd = String(item.CMD || '').replace(/\s/g, '');
 
+                    // 해제(3) 통보는 제외
                     if (cmd.includes('해제') || cmd === '3') return;
 
-                    targetSeas.forEach(sea => {
-                        let isMatched = sea.codes.includes(regId) || sea.patterns.some(p => regKo.includes(p.replace(/\s/g, '')));
-                        if (isMatched) {
-                            if (lvl.includes('예비') || cmd === '2' || wrn.includes('예비') || regKo.includes('예비')) {
-                                activeSeaWarnings[sea.key] = '풍랑예비특보';
-                            } else if (lvl.includes('경보') || lvl === '2') {
-                                activeSeaWarnings[sea.key] = '풍랑경보';
-                            } else {
-                                activeSeaWarnings[sea.key] = '풍랑주의보';
-                            }
-                        }
-                    });
+                    // 풍랑특보(경보/주의보/예비)가 아니면 제외
+                    if (!wrn.includes('풍랑') && !wrn.includes('해상')) return;
+
+                    let alertType = '풍랑주의보';
+                    if (lvl.includes('예비') || cmd === '2' || wrn.includes('예비') || regKo.includes('예비')) {
+                        alertType = '풍랑예비특보';
+                    } else if (lvl.includes('경보') || lvl === '2') {
+                        alertType = '풍랑경보';
+                    }
+
+                    // 💡 [실제 JSON 데이터 명칭(REG_KO) 기반 1:1 직결 매핑]
+                    if (regKo.includes('전남북부')) {
+                        activeSeaWarnings['서해남부앞바다(전남북부)'] = alertType;
+                    } else if (regKo.includes('전남중부')) {
+                        activeSeaWarnings['서해남부앞바다(전남중부)'] = alertType;
+                    } else if (regKo.includes('전남남부')) {
+                        activeSeaWarnings['서해남부앞바다(전남남부)'] = alertType;
+                    } else if (regKo.includes('북쪽안쪽먼바다') || (regKo.includes('서해남부') && regKo.includes('북쪽') && regKo.includes('먼바다'))) {
+                        activeSeaWarnings['서해남부북쪽안쪽먼바다'] = alertType;
+                    } else if (regKo.includes('남쪽안쪽먼바다') || regKo.includes('남쪽바깥먼바다') || (regKo.includes('서해남부') && regKo.includes('남쪽') && regKo.includes('먼바다'))) {
+                        activeSeaWarnings['서해남부남쪽안쪽먼바다'] = alertType;
+                    } else if (regKo.includes('남해서부서쪽먼바다') || (regKo.includes('남해서부') && regKo.includes('서쪽'))) {
+                        activeSeaWarnings['남해서부서쪽먼바다'] = alertType;
+                    } else if (regKo.includes('제주도북부앞바다') || (regKo.includes('제주도') && regKo.includes('북부앞'))) {
+                        activeSeaWarnings['제주도북부앞바다'] = alertType;
+                    }
                 });
                 return;
             }
         } catch (e) {
-            // 2. 텍스트 전문(Text) 블록 파싱
+            // 2. 만약 일반 텍스트 전문 형태로 들어올 경우의 백업 파서
             let text = rawText.replace(/\r/g, '');
 
-            // (1) 풍랑경보 블록 추출 (o 풍랑경보 ~ 다음 'o' 또는 '(1)' 전까지)
             let gMatch = text.match(/o\s*풍랑경보[^\n:]*:\s*([\s\S]*?)(?=\n\s*o|\n\s*\(\d\)|\n\s*<|$)/i);
             let gBlock = gMatch ? gMatch[1].replace(/\s/g, '') : '';
 
-            // (2) 풍랑주의보 블록 추출 (o 풍랑주의보 ~ 다음 'o' 또는 '(1)' 전까지)
             let wMatch = text.match(/o\s*풍랑주의보[^\n:]*:\s*([\s\S]*?)(?=\n\s*o|\n\s*\(\d\)|\n\s*<|$)/i);
             let wBlock = wMatch ? wMatch[1].replace(/\s/g, '') : '';
 
-            // (3) 풍랑예비특보 블록 추출
             let pMatch = text.match(/o\s*(?:풍랑)?예비특보[^\n:]*:\s*([\s\S]*?)(?=\n\s*o|\n\s*\(\d\)|\n\s*<|$)/i);
             let pBlock = pMatch ? pMatch[1].replace(/\s/g, '') : '';
 
-            // [경보 판정]
-            if (gBlock) {
-                targetSeas.forEach(sea => {
-                    if (sea.patterns.some(p => gBlock.includes(p.replace(/\s/g, '')))) {
-                        activeSeaWarnings[sea.key] = '풍랑경보';
-                    }
-                });
-            }
+            const matchBlock = (block, alertType) => {
+                if (!block) return;
+                if (block.includes('전남북부')) activeSeaWarnings['서해남부앞바다(전남북부)'] = alertType;
+                if (block.includes('전남중부')) activeSeaWarnings['서해남부앞바다(전남중부)'] = alertType;
+                if (block.includes('전남남부')) activeSeaWarnings['서해남부앞바다(전남남부)'] = alertType;
+                if (block.includes('서해남부북쪽안쪽먼바다')) activeSeaWarnings['서해남부북쪽안쪽먼바다'] = alertType;
+                if (block.includes('서해남부남쪽안쪽먼바다')) activeSeaWarnings['서해남부남쪽안쪽먼바다'] = alertType;
+                if (block.includes('남해서부서쪽먼바다')) activeSeaWarnings['남해서부서쪽먼바다'] = alertType;
+                if (block.includes('제주도북부앞바다')) activeSeaWarnings['제주도북부앞바다'] = alertType;
+            };
 
-            // [주의보 판정 - 오직 캡처된 풍랑주의보 블록 내부만 대조]
-            if (wBlock) {
-                targetSeas.forEach(sea => {
-                    if (!activeSeaWarnings[sea.key]) {
-                        if (sea.patterns.some(p => wBlock.includes(p.replace(/\s/g, '')))) {
-                            activeSeaWarnings[sea.key] = '풍랑주의보';
-                        }
-                    }
-                });
-            }
-
-            // [예비특보 판정]
-            if (pBlock) {
-                targetSeas.forEach(sea => {
-                    if (!activeSeaWarnings[sea.key]) {
-                        if (sea.patterns.some(p => pBlock.includes(p.replace(/\s/g, '')))) {
-                            activeSeaWarnings[sea.key] = '풍랑예비특보';
-                        }
-                    }
-                });
-            }
+            matchBlock(gBlock, '풍랑경보');
+            matchBlock(wBlock, '풍랑주의보');
+            matchBlock(pBlock, '풍랑예비특보');
         }
     }
 
