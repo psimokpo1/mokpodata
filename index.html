@@ -1054,7 +1054,6 @@
             }
         }
 
-        // 미투입 예비선 및 숨김 본선은 상황판에서 제외
         let displayList = [];
         for (let c in allShipsMap) {
             let s = allShipsMap[c];
@@ -1414,7 +1413,6 @@
                 if (boardFilterMode === 'special' && (status !== 'captain' && status !== 'office')) isFiltered = true;
                 if (boardFilterMode === 'ok' && status !== 'ok') isFiltered = true;
 
-                // 💡 [요청사항 반영]: 상황판에서 '대선투입 뱃지'와 '대선해제 버튼'을 완전히 비워 깔끔하게 단독 표출
                 if (!isFiltered) {
                     rowsHtml += `
                         <tr>
@@ -1654,6 +1652,7 @@
         fetchWeatherRealtime();
     };
 
+    // 💡 [기상특보 파싱 엔진 - 해제 섹션 오인식 방지 및 서해앞바다 명칭 완전 정밀화]
     function parseWeatherWarnings(rawText) {
         if (!rawText || rawText.includes('AUTH_ERROR') || rawText.includes('SERVICE_ERROR') || rawText.includes('"status" : 401')) return;
         
@@ -1666,25 +1665,27 @@
         const targetSeas = [
             { key: '서해남부북쪽안쪽먼바다', codes: ['S1232110'], patterns: ['서해남부북쪽안쪽먼바다'] },
             { key: '서해남부남쪽안쪽먼바다', codes: ['S1232210', 'S1232220'], patterns: ['서해남부남쪽안쪽먼바다', '서해남부남쪽바깥먼바다'] },
-            { key: '서해남부앞바다(전남중부)', codes: ['S1231200'], patterns: ['서해남부앞바다(전남중부)', '전남중부앞바다'] },
-            { key: '서해남부앞바다(전남남부)', codes: ['S1231300'], patterns: ['서해남부앞바다(전남남부)', '전남남부앞바다'] },
-            { key: '서해남부앞바다(전남북부)', codes: ['S1231100'], patterns: ['서해남부앞바다(전남북부)', '전남북부앞바다'] },
+            { key: '서해남부앞바다(전남중부)', codes: ['S1231200'], patterns: ['서해남부앞바다(전남중부서해앞바다)', '서해남부앞바다(전남중부)', '전남중부서해앞바다', '전남중부앞바다', '전남중부앞'] },
+            { key: '서해남부앞바다(전남남부)', codes: ['S1231300'], patterns: ['서해남부앞바다(전남남부서해앞바다)', '서해남부앞바다(전남남부)', '전남남부서해앞바다', '전남남부앞바다', '전남남부앞'] },
+            { key: '서해남부앞바다(전남북부)', codes: ['S1231100'], patterns: ['서해남부앞바다(전남북부서해앞바다)', '서해남부앞바다(전남북부)', '전남북부서해앞바다', '전남북부앞바다', '전남북부앞'] },
             { key: '남해서부서쪽먼바다', codes: ['S1322100'], patterns: ['남해서부서쪽먼바다'] },
             { key: '제주도북부앞바다', codes: ['S1323100'], patterns: ['제주도북부앞바다'] }
         ];
 
+        // [방법 1]: JSON 응답 파싱
         try {
             let data = JSON.parse(rawText);
             let items = Array.isArray(data) ? data : (data.items || data.result || []);
 
             if (items.length > 0) {
                 items.forEach(item => {
-                    let regId = (item.REG_ID || '').trim();
-                    let regKo = (item.REG_KO || '').replace(/\s/g, '');
-                    let wrn = (item.WRN || '').replace(/\s/g, '');
-                    let lvl = (item.LVL || '').replace(/\s/g, '');
-                    let cmd = (item.CMD || '').replace(/\s/g, '');
+                    let regId = String(item.REG_ID || '').trim();
+                    let regKo = String(item.REG_KO || item.REG_NAME || '').replace(/\s/g, '');
+                    let wrn = String(item.WRN || '').replace(/\s/g, '');
+                    let lvl = String(item.LVL || '').replace(/\s/g, '');
+                    let cmd = String(item.CMD || '').replace(/\s/g, '');
 
+                    // CMD 3은 명시적 해제이므로 절대 발효 처리하지 않음
                     if (cmd.includes('해제') || cmd === '3') return;
 
                     targetSeas.forEach(sea => {
@@ -1703,20 +1704,47 @@
                 return;
             }
         } catch (e) {
+            // [방법 2]: 기상청 정식 특보 통보문(Text) 블록 파싱
             const lines = rawText.split('\n');
-            let currentMode = 'NONE';
+            let currentMode = 'NONE'; // 'NONE' | 'ISSUED' | 'PRE' | 'CLEAR'
 
             for (let line of lines) {
                 let clean = line.replace(/\s/g, '');
-                if (clean.includes('예비특보') || clean.includes('예비통보')) currentMode = 'PRE';
-                else if (clean.includes('특보발효') || clean.includes('특보현황') || clean.includes('발표현황')) currentMode = 'ISSUED';
+                if (!clean) continue;
+
+                // 모드 전환 검사 (해제 섹션이 감지되면 CLEAR 모드로 전환하여 뒤따라오는 구역 무시)
+                if (clean.includes('해제') || clean.includes('특보해제') || clean.includes('주의보해제') || clean.includes('경보해제')) {
+                    currentMode = 'CLEAR';
+                } else if (clean.includes('예비특보') || clean.includes('예비통보')) {
+                    currentMode = 'PRE';
+                } else if (clean.includes('특보발효') || clean.includes('특보현황') || clean.includes('발표현황') || clean.includes('특보내용') || clean.includes('풍랑주의보발표') || clean.includes('풍랑경보발표')) {
+                    currentMode = 'ISSUED';
+                }
+
+                // 기상청 통보문 요약 헤더가 직접 포함된 라인 처리
+                // 예: "o 풍랑주의보 : 서해남부앞바다(전남북부서해앞바다), ..."
+                let lineIsDirectIssued = clean.startsWith('o풍랑주의보:') || clean.startsWith('o풍랑경보:');
+                let lineIsDirectPre = clean.startsWith('o풍랑예비특보:') || clean.startsWith('o예비특보:');
+                let lineIsDirectClear = clean.includes('해제:');
+
+                if (lineIsDirectClear) {
+                    currentMode = 'CLEAR';
+                    continue;
+                }
+
+                let effectiveMode = lineIsDirectIssued ? 'ISSUED' : (lineIsDirectPre ? 'PRE' : currentMode);
+
+                // CLEAR 모드일 때는 절대 발효 처리하지 않음
+                if (effectiveMode === 'CLEAR' || effectiveMode === 'NONE') {
+                    continue;
+                }
 
                 targetSeas.forEach(sea => {
                     let isMatch = sea.patterns.some(p => clean.includes(p.replace(/\s/g, '')));
-                    if (isMatch && !clean.includes('해제')) {
-                        if (currentMode === 'PRE' || clean.includes('예비')) {
+                    if (isMatch) {
+                        if (effectiveMode === 'PRE' || clean.includes('예비')) {
                             activeSeaWarnings[sea.key] = '풍랑예비특보';
-                        } else if (currentMode === 'ISSUED') {
+                        } else if (effectiveMode === 'ISSUED') {
                             if (activeSeaWarnings[sea.key] !== '풍랑예비특보') {
                                 activeSeaWarnings[sea.key] = clean.includes('경보') ? '풍랑경보' : '풍랑주의보';
                             }
