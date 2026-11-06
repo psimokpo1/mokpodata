@@ -1652,7 +1652,25 @@
         fetchWeatherRealtime();
     };
 
-    // 💡 [기상특보 파싱 엔진 - 실제 수신 JSON 형식 및 REG_KO 풀네임 기반 완벽 매칭]
+    // 💡 [특보 등급 우선순위 판정 함수: 경보(3) > 주의보(2) > 예비특보(1)]
+    function getAlertPriority(type) {
+        if (!type) return 0;
+        if (type.includes('경보')) return 3;
+        if (type.includes('주의')) return 2;
+        if (type.includes('예비')) return 1;
+        return 0;
+    }
+
+    function setSeaWarningWithPriority(seaKey, newType) {
+        let currentPriority = getAlertPriority(activeSeaWarnings[seaKey]);
+        let newPriority = getAlertPriority(newType);
+        // 바깥먼바다의 예비특보가 이미 발효된 안쪽먼바다 주의보를 덮어쓰지 못하도록 차단
+        if (newPriority >= currentPriority) {
+            activeSeaWarnings[seaKey] = newType;
+        }
+    }
+
+    // 💡 [기상특보 파싱 엔진 - 실제 수신 JSON 형식 및 우선순위 방어 로직 완벽 적용]
     function parseWeatherWarnings(rawText) {
         if (!rawText || rawText.includes('AUTH_ERROR') || rawText.includes('SERVICE_ERROR') || rawText.includes('"status" : 401')) return;
         
@@ -1687,21 +1705,25 @@
                         alertType = '풍랑경보';
                     }
 
-                    // 💡 [실제 JSON 데이터 명칭(REG_KO) 기반 1:1 직결 매핑]
+                    // 💡 [실제 JSON 데이터 명칭(REG_KO) 기반 1:1 직결 매핑 및 우선순위 적용]
                     if (regKo.includes('전남북부')) {
-                        activeSeaWarnings['서해남부앞바다(전남북부)'] = alertType;
+                        setSeaWarningWithPriority('서해남부앞바다(전남북부)', alertType);
                     } else if (regKo.includes('전남중부')) {
-                        activeSeaWarnings['서해남부앞바다(전남중부)'] = alertType;
+                        setSeaWarningWithPriority('서해남부앞바다(전남중부)', alertType);
                     } else if (regKo.includes('전남남부')) {
-                        activeSeaWarnings['서해남부앞바다(전남남부)'] = alertType;
+                        setSeaWarningWithPriority('서해남부앞바다(전남남부)', alertType);
                     } else if (regKo.includes('북쪽안쪽먼바다') || (regKo.includes('서해남부') && regKo.includes('북쪽') && regKo.includes('먼바다'))) {
-                        activeSeaWarnings['서해남부북쪽안쪽먼바다'] = alertType;
-                    } else if (regKo.includes('남쪽안쪽먼바다') || regKo.includes('남쪽바깥먼바다') || (regKo.includes('서해남부') && regKo.includes('남쪽') && regKo.includes('먼바다'))) {
-                        activeSeaWarnings['서해남부남쪽안쪽먼바다'] = alertType;
+                        setSeaWarningWithPriority('서해남부북쪽안쪽먼바다', alertType);
+                    } else if (regKo.includes('남쪽안쪽먼바다') || (regKo.includes('서해남부') && regKo.includes('남쪽') && regKo.includes('먼바다'))) {
+                        // 서해남부남쪽안쪽먼바다가 직접 주의보 발효된 경우 주의보를 우선 확정
+                        setSeaWarningWithPriority('서해남부남쪽안쪽먼바다', alertType);
+                    } else if (regKo.includes('남쪽바깥먼바다')) {
+                        // 안쪽먼바다에 이미 주의보가 세팅되어 있다면 바깥먼바다의 예비특보가 이를 덮어쓰지 못함
+                        setSeaWarningWithPriority('서해남부남쪽안쪽먼바다', alertType);
                     } else if (regKo.includes('남해서부서쪽먼바다') || (regKo.includes('남해서부') && regKo.includes('서쪽'))) {
-                        activeSeaWarnings['남해서부서쪽먼바다'] = alertType;
+                        setSeaWarningWithPriority('남해서부서쪽먼바다', alertType);
                     } else if (regKo.includes('제주도북부앞바다') || (regKo.includes('제주도') && regKo.includes('북부앞'))) {
-                        activeSeaWarnings['제주도북부앞바다'] = alertType;
+                        setSeaWarningWithPriority('제주도북부앞바다', alertType);
                     }
                 });
                 return;
@@ -1721,13 +1743,13 @@
 
             const matchBlock = (block, alertType) => {
                 if (!block) return;
-                if (block.includes('전남북부')) activeSeaWarnings['서해남부앞바다(전남북부)'] = alertType;
-                if (block.includes('전남중부')) activeSeaWarnings['서해남부앞바다(전남중부)'] = alertType;
-                if (block.includes('전남남부')) activeSeaWarnings['서해남부앞바다(전남남부)'] = alertType;
-                if (block.includes('서해남부북쪽안쪽먼바다')) activeSeaWarnings['서해남부북쪽안쪽먼바다'] = alertType;
-                if (block.includes('서해남부남쪽안쪽먼바다')) activeSeaWarnings['서해남부남쪽안쪽먼바다'] = alertType;
-                if (block.includes('남해서부서쪽먼바다')) activeSeaWarnings['남해서부서쪽먼바다'] = alertType;
-                if (block.includes('제주도북부앞바다')) activeSeaWarnings['제주도북부앞바다'] = alertType;
+                if (block.includes('전남북부')) setSeaWarningWithPriority('서해남부앞바다(전남북부)', alertType);
+                if (block.includes('전남중부')) setSeaWarningWithPriority('서해남부앞바다(전남중부)', alertType);
+                if (block.includes('전남남부')) setSeaWarningWithPriority('서해남부앞바다(전남남부)', alertType);
+                if (block.includes('서해남부북쪽안쪽먼바다')) setSeaWarningWithPriority('서해남부북쪽안쪽먼바다', alertType);
+                if (block.includes('서해남부남쪽안쪽먼바다')) setSeaWarningWithPriority('서해남부남쪽안쪽먼바다', alertType);
+                if (block.includes('남해서부서쪽먼바다')) setSeaWarningWithPriority('남해서부서쪽먼바다', alertType);
+                if (block.includes('제주도북부앞바다')) setSeaWarningWithPriority('제주도북부앞바다', alertType);
             };
 
             matchBlock(gBlock, '풍랑경보');
@@ -1746,14 +1768,12 @@
             const buffer = await response.arrayBuffer();
             let text = "";
             try {
-                // 1차 시도: EUC-KR 디코딩 (기상청 API 허브 표준)
                 const decoderEuc = new TextDecoder('euc-kr');
                 text = decoderEuc.decode(buffer);
                 if (text.includes('')) {
                     throw new Error("깨짐 발생");
                 }
             } catch (decErr) {
-                // 2차 시도: UTF-8 디코딩
                 const decoderUtf = new TextDecoder('utf-8');
                 text = decoderUtf.decode(buffer);
             }
