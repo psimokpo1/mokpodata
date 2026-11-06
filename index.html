@@ -1652,7 +1652,7 @@
         fetchWeatherRealtime();
     };
 
-    // 💡 [기상특보 파싱 엔진 - 해제 섹션 오인식 방지 및 서해앞바다 명칭 완전 정밀화]
+    // 💡 [기상특보 파싱 엔진 - 오직 상단 '발효된 1줄'만 정확히 읽어오는 정밀 로직]
     function parseWeatherWarnings(rawText) {
         if (!rawText || rawText.includes('AUTH_ERROR') || rawText.includes('SERVICE_ERROR') || rawText.includes('"status" : 401')) return;
         
@@ -1665,14 +1665,14 @@
         const targetSeas = [
             { key: '서해남부북쪽안쪽먼바다', codes: ['S1232110'], patterns: ['서해남부북쪽안쪽먼바다'] },
             { key: '서해남부남쪽안쪽먼바다', codes: ['S1232210', 'S1232220'], patterns: ['서해남부남쪽안쪽먼바다', '서해남부남쪽바깥먼바다'] },
-            { key: '서해남부앞바다(전남중부)', codes: ['S1231200'], patterns: ['서해남부앞바다(전남중부서해앞바다)', '서해남부앞바다(전남중부)', '전남중부서해앞바다', '전남중부앞바다', '전남중부앞'] },
-            { key: '서해남부앞바다(전남남부)', codes: ['S1231300'], patterns: ['서해남부앞바다(전남남부서해앞바다)', '서해남부앞바다(전남남부)', '전남남부서해앞바다', '전남남부앞바다', '전남남부앞'] },
-            { key: '서해남부앞바다(전남북부)', codes: ['S1231100'], patterns: ['서해남부앞바다(전남북부서해앞바다)', '서해남부앞바다(전남북부)', '전남북부서해앞바다', '전남북부앞바다', '전남북부앞'] },
+            { key: '서해남부앞바다(전남중부)', codes: ['S1231200'], patterns: ['전남중부서해앞바다', '서해남부앞바다(전남중부)', '전남중부'] },
+            { key: '서해남부앞바다(전남남부)', codes: ['S1231300'], patterns: ['전남남부서해앞바다', '서해남부앞바다(전남남부)', '전남남부'] },
+            { key: '서해남부앞바다(전남북부)', codes: ['S1231100'], patterns: ['전남북부서해앞바다', '서해남부앞바다(전남북부)', '전남북부'] },
             { key: '남해서부서쪽먼바다', codes: ['S1322100'], patterns: ['남해서부서쪽먼바다'] },
             { key: '제주도북부앞바다', codes: ['S1323100'], patterns: ['제주도북부앞바다'] }
         ];
 
-        // [방법 1]: JSON 응답 파싱
+        // 1. JSON 형태의 API 응답 처리
         try {
             let data = JSON.parse(rawText);
             let items = Array.isArray(data) ? data : (data.items || data.result || []);
@@ -1685,7 +1685,6 @@
                     let lvl = String(item.LVL || '').replace(/\s/g, '');
                     let cmd = String(item.CMD || '').replace(/\s/g, '');
 
-                    // CMD 3은 명시적 해제이므로 절대 발효 처리하지 않음
                     if (cmd.includes('해제') || cmd === '3') return;
 
                     targetSeas.forEach(sea => {
@@ -1704,50 +1703,50 @@
                 return;
             }
         } catch (e) {
-            // [방법 2]: 기상청 정식 특보 통보문(Text) 블록 파싱
+            // 2. 텍스트 전문 형태 파싱 (오직 상단 발효 헤더 1줄만 정확히 파싱)
             const lines = rawText.split('\n');
-            let currentMode = 'NONE'; // 'NONE' | 'ISSUED' | 'PRE' | 'CLEAR'
+            let issuedWarnLine = "";
+            let issuedGyeongboLine = "";
+            let preWarnLine = "";
 
             for (let line of lines) {
                 let clean = line.replace(/\s/g, '');
-                if (!clean) continue;
-
-                // 모드 전환 검사 (해제 섹션이 감지되면 CLEAR 모드로 전환하여 뒤따라오는 구역 무시)
-                if (clean.includes('해제') || clean.includes('특보해제') || clean.includes('주의보해제') || clean.includes('경보해제')) {
-                    currentMode = 'CLEAR';
-                } else if (clean.includes('예비특보') || clean.includes('예비통보')) {
-                    currentMode = 'PRE';
-                } else if (clean.includes('특보발효') || clean.includes('특보현황') || clean.includes('발표현황') || clean.includes('특보내용') || clean.includes('풍랑주의보발표') || clean.includes('풍랑경보발표')) {
-                    currentMode = 'ISSUED';
+                // 특보문 상단의 공식 요약 헤더만 정확히 캡처
+                if (clean.startsWith('o풍랑주의보:') || clean.startsWith('o풍랑주의보-')) {
+                    issuedWarnLine = clean;
+                } else if (clean.startsWith('o풍랑경보:') || clean.startsWith('o풍랑경보-')) {
+                    issuedGyeongboLine = clean;
+                } else if (clean.startsWith('o풍랑예비특보:') || clean.startsWith('o예비특보:')) {
+                    preWarnLine = clean;
                 }
+            }
 
-                // 기상청 통보문 요약 헤더가 직접 포함된 라인 처리
-                // 예: "o 풍랑주의보 : 서해남부앞바다(전남북부서해앞바다), ..."
-                let lineIsDirectIssued = clean.startsWith('o풍랑주의보:') || clean.startsWith('o풍랑경보:');
-                let lineIsDirectPre = clean.startsWith('o풍랑예비특보:') || clean.startsWith('o예비특보:');
-                let lineIsDirectClear = clean.includes('해제:');
-
-                if (lineIsDirectClear) {
-                    currentMode = 'CLEAR';
-                    continue;
-                }
-
-                let effectiveMode = lineIsDirectIssued ? 'ISSUED' : (lineIsDirectPre ? 'PRE' : currentMode);
-
-                // CLEAR 모드일 때는 절대 발효 처리하지 않음
-                if (effectiveMode === 'CLEAR' || effectiveMode === 'NONE') {
-                    continue;
-                }
-
+            // [발효 1]: 풍랑경보 라인에 속해있는 구역 판별
+            if (issuedGyeongboLine) {
                 targetSeas.forEach(sea => {
-                    let isMatch = sea.patterns.some(p => clean.includes(p.replace(/\s/g, '')));
-                    if (isMatch) {
-                        if (effectiveMode === 'PRE' || clean.includes('예비')) {
+                    if (sea.patterns.some(p => issuedGyeongboLine.includes(p.replace(/\s/g, '')))) {
+                        activeSeaWarnings[sea.key] = '풍랑경보';
+                    }
+                });
+            }
+
+            // [발효 2]: 풍랑주의보 라인에 속해있는 구역 판별 (경보가 아닐 때)
+            if (issuedWarnLine) {
+                targetSeas.forEach(sea => {
+                    if (!activeSeaWarnings[sea.key]) {
+                        if (sea.patterns.some(p => issuedWarnLine.includes(p.replace(/\s/g, '')))) {
+                            activeSeaWarnings[sea.key] = '풍랑주의보';
+                        }
+                    }
+                });
+            }
+
+            // [발효 3]: 예비특보 라인에 속해있는 구역 판별 (발효가 아닐 때)
+            if (preWarnLine) {
+                targetSeas.forEach(sea => {
+                    if (!activeSeaWarnings[sea.key]) {
+                        if (sea.patterns.some(p => preWarnLine.includes(p.replace(/\s/g, '')))) {
                             activeSeaWarnings[sea.key] = '풍랑예비특보';
-                        } else if (effectiveMode === 'ISSUED') {
-                            if (activeSeaWarnings[sea.key] !== '풍랑예비특보') {
-                                activeSeaWarnings[sea.key] = clean.includes('경보') ? '풍랑경보' : '풍랑주의보';
-                            }
                         }
                     }
                 });
