@@ -1652,7 +1652,7 @@
         fetchWeatherRealtime();
     };
 
-    // 💡 [기상특보 파싱 엔진 - 정규식 기반 정밀 헤더 캡처 방식 적용]
+    // 💡 [기상특보 파싱 엔진 - 상단 요약블록 엄격 분리 및 하단 설명문 원천 배제]
     function parseWeatherWarnings(rawText) {
         if (!rawText || rawText.includes('AUTH_ERROR') || rawText.includes('SERVICE_ERROR') || rawText.includes('"status" : 401')) return;
         
@@ -1665,14 +1665,14 @@
         const targetSeas = [
             { key: '서해남부북쪽안쪽먼바다', codes: ['S1232110'], patterns: ['서해남부북쪽안쪽먼바다'] },
             { key: '서해남부남쪽안쪽먼바다', codes: ['S1232210', 'S1232220'], patterns: ['서해남부남쪽안쪽먼바다', '서해남부남쪽바깥먼바다'] },
-            { key: '서해남부앞바다(전남중부)', codes: ['S1231200'], patterns: ['전남중부서해앞바다', '서해남부앞바다(전남중부)', '전남중부'] },
-            { key: '서해남부앞바다(전남남부)', codes: ['S1231300'], patterns: ['전남남부서해앞바다', '서해남부앞바다(전남남부)', '전남남부'] },
-            { key: '서해남부앞바다(전남북부)', codes: ['S1231100'], patterns: ['전남북부서해앞바다', '서해남부앞바다(전남북부)', '전남북부'] },
+            { key: '서해남부앞바다(전남중부)', codes: ['S1231200'], patterns: ['전남중부서해앞바다', '서해남부앞바다(전남중부서해앞바다)', '전남중부앞바다'] },
+            { key: '서해남부앞바다(전남남부)', codes: ['S1231300'], patterns: ['전남남부서해앞바다', '서해남부앞바다(전남남부서해앞바다)', '전남남부앞바다'] },
+            { key: '서해남부앞바다(전남북부)', codes: ['S1231100'], patterns: ['전남북부서해앞바다', '서해남부앞바다(전남북부서해앞바다)', '전남북부앞바다'] },
             { key: '남해서부서쪽먼바다', codes: ['S1322100'], patterns: ['남해서부서쪽먼바다'] },
             { key: '제주도북부앞바다', codes: ['S1323100'], patterns: ['제주도북부앞바다'] }
         ];
 
-        // 1. JSON 구조 응답 처리
+        // 1. JSON 형태의 API 응답 처리
         try {
             let data = JSON.parse(rawText);
             let items = Array.isArray(data) ? data : (data.items || data.result || []);
@@ -1703,47 +1703,46 @@
                 return;
             }
         } catch (e) {
-            // 2. 텍스트 전문(Text) 정규식 단락 추출
-            // 기상청 정식 특보문은 상단에 "o 풍랑주의보 : 구역1, 구역2..." 형태로 내려옵니다.
-            let cleanText = rawText.replace(/\r/g, '');
+            // 2. 텍스트 전문(Text) 블록 파싱
+            let text = rawText.replace(/\r/g, '');
 
-            // (1) 풍랑경보 캡처
-            let gyeongboMatch = cleanText.match(/o\s*풍랑경보[^\n:]*:\s*([^\n]+(?:\n\s+[^\n]+)*)/i);
-            let gyeongboArea = gyeongboMatch ? gyeongboMatch[1].replace(/\s/g, '') : '';
+            // (1) 풍랑경보 블록 추출 (o 풍랑경보 ~ 다음 'o' 또는 '(1)' 전까지)
+            let gMatch = text.match(/o\s*풍랑경보[^\n:]*:\s*([\s\S]*?)(?=\n\s*o|\n\s*\(\d\)|\n\s*<|$)/i);
+            let gBlock = gMatch ? gMatch[1].replace(/\s/g, '') : '';
 
-            // (2) 풍랑주의보 캡처
-            let warnMatch = cleanText.match(/o\s*풍랑주의보[^\n:]*:\s*([^\n]+(?:\n\s+[^\n]+)*)/i);
-            let warnArea = warnMatch ? warnMatch[1].replace(/\s/g, '') : '';
+            // (2) 풍랑주의보 블록 추출 (o 풍랑주의보 ~ 다음 'o' 또는 '(1)' 전까지)
+            let wMatch = text.match(/o\s*풍랑주의보[^\n:]*:\s*([\s\S]*?)(?=\n\s*o|\n\s*\(\d\)|\n\s*<|$)/i);
+            let wBlock = wMatch ? wMatch[1].replace(/\s/g, '') : '';
 
-            // (3) 풍랑예비특보 캡처
-            let preMatch = cleanText.match(/o\s*(?:풍랑)?예비특보[^\n:]*:\s*([^\n]+(?:\n\s+[^\n]+)*)/i);
-            let preArea = preMatch ? preMatch[1].replace(/\s/g, '') : '';
+            // (3) 풍랑예비특보 블록 추출
+            let pMatch = text.match(/o\s*(?:풍랑)?예비특보[^\n:]*:\s*([\s\S]*?)(?=\n\s*o|\n\s*\(\d\)|\n\s*<|$)/i);
+            let pBlock = pMatch ? pMatch[1].replace(/\s/g, '') : '';
 
-            // 경보 매칭
-            if (gyeongboArea) {
+            // [경보 판정]
+            if (gBlock) {
                 targetSeas.forEach(sea => {
-                    if (sea.patterns.some(p => gyeongboArea.includes(p.replace(/\s/g, '')))) {
+                    if (sea.patterns.some(p => gBlock.includes(p.replace(/\s/g, '')))) {
                         activeSeaWarnings[sea.key] = '풍랑경보';
                     }
                 });
             }
 
-            // 주의보 매칭 (오직 상단 'o 풍랑주의보 :' 텍스트 안에 있는 구역만 인정)
-            if (warnArea) {
+            // [주의보 판정 - 오직 캡처된 풍랑주의보 블록 내부만 대조]
+            if (wBlock) {
                 targetSeas.forEach(sea => {
                     if (!activeSeaWarnings[sea.key]) {
-                        if (sea.patterns.some(p => warnArea.includes(p.replace(/\s/g, '')))) {
+                        if (sea.patterns.some(p => wBlock.includes(p.replace(/\s/g, '')))) {
                             activeSeaWarnings[sea.key] = '풍랑주의보';
                         }
                     }
                 });
             }
 
-            // 예비특보 매칭
-            if (preArea) {
+            // [예비특보 판정]
+            if (pBlock) {
                 targetSeas.forEach(sea => {
                     if (!activeSeaWarnings[sea.key]) {
-                        if (sea.patterns.some(p => preArea.includes(p.replace(/\s/g, '')))) {
+                        if (sea.patterns.some(p => pBlock.includes(p.replace(/\s/g, '')))) {
                             activeSeaWarnings[sea.key] = '풍랑예비특보';
                         }
                     }
