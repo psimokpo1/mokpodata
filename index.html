@@ -354,11 +354,11 @@
             <div class="summary-count" style="color:#059669;" id="sum-ok">0</div>
         </div>
         <div class="summary-card warn">
-            <div class="summary-title">🟡 통제 주의 (근접/예비)</div>
+            <div class="summary-title">🟡 통제 주의 (근접/예비/발효예정)</div>
             <div class="summary-count" style="color:#D97706;" id="sum-warn">0</div>
         </div>
         <div class="summary-card danger">
-            <div class="summary-title">🔴 통제 위험 (초과/발효)</div>
+            <div class="summary-title">🔴 통제 위험 (초과/발효중)</div>
             <div class="summary-count" style="color:#DC2626;" id="sum-danger">0</div>
         </div>
         <div class="summary-card special">
@@ -393,7 +393,7 @@
     <div class="board-filter-group">
         <button class="board-filter-btn active" onclick="filterBoard('all', this)">전체 선박</button>
         <button class="board-filter-btn" onclick="filterBoard('warn_danger', this)">⚠️ 주의/위험 선박만</button>
-        <button class="board-filter-btn" onclick="filterBoard('danger', this)">🔴 위험(초과/특보) 선박만</button>
+        <button class="board-filter-btn" onclick="filterBoard('danger', this)">🔴 위험(초과/특보발효) 선박만</button>
         <button class="board-filter-btn" onclick="filterBoard('special', this)">🔵 선장/파견지협의 선박</button>
         <button class="board-filter-btn" onclick="filterBoard('ok', this)">🟢 정상 선박</button>
     </div>
@@ -480,13 +480,13 @@
         <div style="margin-top:16px; padding:12px; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:6px;">
             <div style="font-size:12px; font-weight:bold; color:#0F172A; margin-bottom:6px;">🚨 관할 해역 풍랑특보 수동 체크 (체크 시 즉시 테이블에 반영)</div>
             <div style="display:flex; flex-direction:column; gap:6px; font-size:12px;">
-                <label><input type="checkbox" id="chk-sea-1" onchange="toggleManualWarning('서해남부북쪽안쪽먼바다', this.checked)"> 서해남부북쪽안쪽먼바다 풍랑주의보</label>
-                <label><input type="checkbox" id="chk-sea-2" onchange="toggleManualWarning('서해남부남쪽안쪽먼바다', this.checked)"> 서해남부남쪽안쪽먼바다 풍랑주의보</label>
-                <label><input type="checkbox" id="chk-sea-3" onchange="toggleManualWarning('서해남부앞바다(전남중부)', this.checked)"> 서해남부앞바다(전남중부) 풍랑주의보</label>
-                <label><input type="checkbox" id="chk-sea-4" onchange="toggleManualWarning('서해남부앞바다(전남남부)', this.checked)"> 서해남부앞바다(전남남부) 풍랑주의보</label>
-                <label><input type="checkbox" id="chk-sea-5" onchange="toggleManualWarning('서해남부앞바다(전남북부)', this.checked)"> 서해남부앞바다(전남북부) 풍랑주의보</label>
-                <label><input type="checkbox" id="chk-sea-6" onchange="toggleManualWarning('남해서부서쪽먼바다', this.checked)"> 남해서부서쪽먼바다 풍랑주의보</label>
-                <label><input type="checkbox" id="chk-sea-7" onchange="toggleManualWarning('제주도북부앞바다', this.checked)"> 제주도북부앞바다 풍랑주의보</label>
+                <label><input type="checkbox" id="chk-sea-1" onchange="toggleManualWarning('서해남부북쪽안쪽먼바다', this.checked)"> 서해남부북쪽안쪽먼바다 풍랑주의보(발효중)</label>
+                <label><input type="checkbox" id="chk-sea-2" onchange="toggleManualWarning('서해남부남쪽안쪽먼바다', this.checked)"> 서해남부남쪽안쪽먼바다 풍랑주의보(발효중)</label>
+                <label><input type="checkbox" id="chk-sea-3" onchange="toggleManualWarning('서해남부앞바다(전남중부)', this.checked)"> 서해남부앞바다(전남중부) 풍랑주의보(발효중)</label>
+                <label><input type="checkbox" id="chk-sea-4" onchange="toggleManualWarning('서해남부앞바다(전남남부)', this.checked)"> 서해남부앞바다(전남남부) 풍랑주의보(발효중)</label>
+                <label><input type="checkbox" id="chk-sea-5" onchange="toggleManualWarning('서해남부앞바다(전남북부)', this.checked)"> 서해남부앞바다(전남북부) 풍랑주의보(발효중)</label>
+                <label><input type="checkbox" id="chk-sea-6" onchange="toggleManualWarning('남해서부서쪽먼바다', this.checked)"> 남해서부서쪽먼바다 풍랑주의보(발효중)</label>
+                <label><input type="checkbox" id="chk-sea-7" onchange="toggleManualWarning('제주도북부앞바다', this.checked)"> 제주도북부앞바다 풍랑주의보(발효중)</label>
             </div>
         </div>
 
@@ -1153,7 +1153,7 @@
                         let alertType = activeSeaWarnings[sea];
                         if (alertType) {
                             activeWarningItems.push({ sea: sea, alert: alertType });
-                            if (alertType.includes('예비')) {
+                            if (alertType.includes('예비') || alertType.includes('예정')) {
                                 hasPreWarning = true;
                             } else {
                                 hasRealIssuedWarning = true;
@@ -1315,7 +1315,7 @@
                         countDanger++;
                     } else if (isAnyWindWarn || isAnyWaveWarn || hasPreWarning) {
                         status = 'warn';
-                        let sub = hasPreWarning ? "예비특보주의" : "기상주의";
+                        let sub = hasPreWarning ? "특보주의" : "기상주의";
                         statusBadge = `<span class="status-badge badge-warn">🟡 평수단축운항(${sub})</span>`;
                         countWarn++;
                     } else {
@@ -1360,7 +1360,7 @@
                         countDanger++;
                     } else if (isAnyWindWarn || isAnyWaveWarn || hasPreWarning) {
                         status = 'warn';
-                        let sub = hasPreWarning ? "예비특보" : "통제주의";
+                        let sub = hasPreWarning ? "예비/예정특보" : "통제주의";
                         statusBadge = `<span class="status-badge badge-warn">🟡 ${sub}(근접)</span>`;
                         countWarn++;
                     } else if (parsed.isCaptainOpinion) {
@@ -1402,8 +1402,9 @@
                 let warningCellHtml = '<span style="color:#94A3B8; font-weight:bold;">-</span>';
                 if (activeWarningItems.length > 0) {
                     warningCellHtml = activeWarningItems.map(w => {
-                        let isAdv = w.alert.includes('예비');
-                        return `<span class="warn-alert-badge ${isAdv ? 'warning-adv' : ''}">🚨 ${w.sea} ${w.alert}</span>`;
+                        let isAdv = w.alert.includes('예비') || w.alert.includes('예정');
+                        let badgeClass = isAdv ? 'warning-adv' : '';
+                        return `<span class="warn-alert-badge ${badgeClass}">🚨 ${w.sea} ${w.alert}</span>`;
                     }).join('<br>');
                 }
 
@@ -1477,7 +1478,7 @@
             let warnTagsHtml = '<span class="m-route-warning-tag" style="background:#F1F5F9; color:#475569;">특보 없음</span>';
             if (g.warnings && g.warnings.length > 0) {
                 warnTagsHtml = g.warnings.map(w => {
-                    let isAdv = w.alert.includes('예비');
+                    let isAdv = w.alert.includes('예비') || w.alert.includes('예정');
                     let bg = isAdv ? '#FEF3C7' : '#FEE2E2';
                     let col = isAdv ? '#B45309' : '#DC2626';
                     return `<span class="m-route-warning-tag" style="background:${bg}; color:${col};">🚨 ${w.sea} ${w.alert}</span>`;
@@ -1629,7 +1630,7 @@
     };
 
     window.toggleManualWarning = (seaName, isChecked) => {
-        activeSeaWarnings[seaName] = isChecked ? '풍랑주의보' : null;
+        activeSeaWarnings[seaName] = isChecked ? '풍랑주의보(발효중)' : null;
         renderOperationBoard();
     };
 
@@ -1652,11 +1653,12 @@
         fetchWeatherRealtime();
     };
 
+    // 💡 [특보 등급 우선순위 판정: 발효중(4) > 발효예정(3) > 예비특보(2) > 없음(0)]
     function getAlertPriority(type) {
         if (!type) return 0;
-        if (type.includes('경보')) return 3;
-        if (type.includes('주의')) return 2;
-        if (type.includes('예비')) return 1;
+        if (type.includes('발효중') || (type.includes('경보') && !type.includes('예정')) || (type.includes('주의보') && !type.includes('예정') && !type.includes('예비'))) return 4;
+        if (type.includes('발효예정') || type.includes('예정')) return 3;
+        if (type.includes('예비')) return 2;
         return 0;
     }
 
@@ -1668,7 +1670,10 @@
         }
     }
 
-    // 💡 [기상특보 파싱 엔진 - 표준 타임스탬프 기반 발효 시각(TM_EF) 정밀 대조]
+    // 💡 [기상특보 파싱 엔진 - 사용자 정의 3대 원칙 완벽 준수]
+    // 1. 예비특보 발표 ➔ '풍랑예비특보'
+    // 2. 특보 발표 후 발효 전 ➔ '풍랑주의보(발효예정 HH:mm)'
+    // 3. 특보 발효 시점 도래 ➔ '풍랑주의보(발효중)'
     function parseWeatherWarnings(rawText) {
         if (!rawText || rawText.includes('AUTH_ERROR') || rawText.includes('SERVICE_ERROR') || rawText.includes('"status" : 401')) return;
         
@@ -1680,7 +1685,6 @@
 
         const nowMs = Date.now();
 
-        // 1. 실제 기상청 JSON 응답 처리
         try {
             let data = JSON.parse(rawText);
             let items = Array.isArray(data) ? data : (data.items || data.result || []);
@@ -1692,7 +1696,6 @@
                     let lvl = String(item.LVL || '').replace(/\s/g, '');
                     let cmd = String(item.CMD || '').replace(/\s/g, '');
                     let tmEfStr = String(item.TM_EF || '').trim().replace(/\D/g, '');
-                    let edTm = String(item.ED_TM || '').replace(/\s/g, '');
 
                     // 해제 통보는 제외
                     if (cmd.includes('해제') || cmd === '3') return;
@@ -1700,8 +1703,9 @@
                     // 풍랑특보가 아니면 제외
                     if (!wrn.includes('풍랑') && !wrn.includes('해상')) return;
 
-                    // 💡 [핵심]: TM_EF를 표준 Date 타임스탬프로 변환하여 현재 시각과 ms 단위 비교
+                    // 발효 시각(TM_EF) ms 단위 정밀 변환
                     let tmEfMs = 0;
+                    let efHourStr = "";
                     if (tmEfStr.length >= 10) {
                         let y = parseInt(tmEfStr.substring(0, 4), 10);
                         let m = parseInt(tmEfStr.substring(4, 6), 10) - 1;
@@ -1709,22 +1713,31 @@
                         let h = parseInt(tmEfStr.substring(8, 10), 10);
                         let min = tmEfStr.length >= 12 ? parseInt(tmEfStr.substring(10, 12), 10) : 0;
                         tmEfMs = new Date(y, m, d, h, min, 0).getTime();
+                        efHourStr = `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}`;
                     }
 
                     let alertType = '풍랑예비특보';
 
-                    // 15시 등 발효 시각이 아직 안 지났으면 무조건 '풍랑예비특보'!
-                    let isTrulyEffective = (tmEfMs > 0 && nowMs >= tmEfMs) && !edTm.includes('예정');
+                    // 원칙 1: 순수 예비특보인 경우
+                    let isPurePreWarning = lvl.includes('예비') || cmd === '2' || wrn.includes('예비') || regKo.includes('예비');
 
-                    if (isTrulyEffective) {
-                        if (lvl.includes('경보') || lvl === '2') {
-                            alertType = '풍랑경보';
-                        } else {
-                            alertType = '풍랑주의보';
-                        }
-                    } else {
-                        // 아직 발효 시각 전이면 주의보로 발표되었더라도 예비특보 상태 유지
+                    if (isPurePreWarning) {
                         alertType = '풍랑예비특보';
+                    } else {
+                        // 정식 주의보/경보로 발표된 경우
+                        let isGyeongbo = lvl.includes('경보');
+                        let baseName = isGyeongbo ? '풍랑경보' : '풍랑주의보';
+
+                        if (tmEfMs > 0 && nowMs < tmEfMs) {
+                            // 원칙 2: 발표되었으나 발효 시각(예: 15시) 이전 ➔ '발효예정'
+                            alertType = `${baseName}(발효예정 ${efHourStr})`;
+                        } else if (tmEfMs > 0 && nowMs >= tmEfMs) {
+                            // 원칙 3: 발효 시각 도래 ➔ '발효중'
+                            alertType = `${baseName}(발효중)`;
+                        } else {
+                            // 시각 정보가 없는 경우 안전하게 예비특보로 유지
+                            alertType = '풍랑예비특보';
+                        }
                     }
 
                     // 💡 [해역별 매핑]
@@ -1751,13 +1764,8 @@
         } catch (e) {
             // 텍스트 전문 파싱 백업
             let text = rawText.replace(/\r/g, '');
-
-            let gMatch = text.match(/o\s*풍랑경보[^\n:]*:\s*([\s\S]*?)(?=\n\s*o|\n\s*\(\d\)|\n\s*<|$)/i);
-            let gBlock = gMatch ? gMatch[1].replace(/\s/g, '') : '';
-
             let wMatch = text.match(/o\s*풍랑주의보[^\n:]*:\s*([\s\S]*?)(?=\n\s*o|\n\s*\(\d\)|\n\s*<|$)/i);
             let wBlock = wMatch ? wMatch[1].replace(/\s/g, '') : '';
-
             let pMatch = text.match(/o\s*(?:풍랑)?예비특보[^\n:]*:\s*([\s\S]*?)(?=\n\s*o|\n\s*\(\d\)|\n\s*<|$)/i);
             let pBlock = pMatch ? pMatch[1].replace(/\s/g, '') : '';
 
@@ -1772,8 +1780,7 @@
                 if (block.includes('제주도북부앞바다')) setSeaWarningWithPriority('제주도북부앞바다', alertType);
             };
 
-            matchBlock(gBlock, '풍랑경보');
-            matchBlock(wBlock, '풍랑주의보');
+            matchBlock(wBlock, '풍랑주의보(발효예정)');
             matchBlock(pBlock, '풍랑예비특보');
         }
     }
