@@ -1652,7 +1652,6 @@
         fetchWeatherRealtime();
     };
 
-    // 💡 [특보 등급 우선순위 판정 함수: 경보(3) > 주의보(2) > 예비특보(1)]
     function getAlertPriority(type) {
         if (!type) return 0;
         if (type.includes('경보')) return 3;
@@ -1669,7 +1668,7 @@
         }
     }
 
-    // 💡 [기상특보 파싱 엔진 - TM_EF(발효시각) vs 현재시각 대조 및 우선순위 방어 로직 완벽 적용]
+    // 💡 [기상특보 파싱 엔진 - 표준 타임스탬프 기반 발효 시각(TM_EF) 정밀 대조]
     function parseWeatherWarnings(rawText) {
         if (!rawText || rawText.includes('AUTH_ERROR') || rawText.includes('SERVICE_ERROR') || rawText.includes('"status" : 401')) return;
         
@@ -1679,15 +1678,7 @@
             activeSeaWarnings[k] = null;
         }
 
-        const now = new Date();
-        const nowKmaTime = parseInt(
-            now.getFullYear() +
-            String(now.getMonth() + 1).padStart(2, '0') +
-            String(now.getDate()).padStart(2, '0') +
-            String(now.getHours()).padStart(2, '0') +
-            String(now.getMinutes()).padStart(2, '0'),
-            10
-        );
+        const nowMs = Date.now();
 
         // 1. 실제 기상청 JSON 응답 처리
         try {
@@ -1700,7 +1691,7 @@
                     let wrn = String(item.WRN || '').replace(/\s/g, '');
                     let lvl = String(item.LVL || '').replace(/\s/g, '');
                     let cmd = String(item.CMD || '').replace(/\s/g, '');
-                    let tmEf = parseInt(String(item.TM_EF || '0').trim(), 10);
+                    let tmEfStr = String(item.TM_EF || '').trim().replace(/\D/g, '');
                     let edTm = String(item.ED_TM || '').replace(/\s/g, '');
 
                     // 해제 통보는 제외
@@ -1709,20 +1700,34 @@
                     // 풍랑특보가 아니면 제외
                     if (!wrn.includes('풍랑') && !wrn.includes('해상')) return;
 
-                    let alertType = '풍랑예비특보'; // 💡 기본 안전값을 '예비특보'로 설정하여 성급한 주의보 승격 방지
+                    // 💡 [핵심]: TM_EF를 표준 Date 타임스탬프로 변환하여 현재 시각과 ms 단위 비교
+                    let tmEfMs = 0;
+                    if (tmEfStr.length >= 10) {
+                        let y = parseInt(tmEfStr.substring(0, 4), 10);
+                        let m = parseInt(tmEfStr.substring(4, 6), 10) - 1;
+                        let d = parseInt(tmEfStr.substring(6, 8), 10);
+                        let h = parseInt(tmEfStr.substring(8, 10), 10);
+                        let min = tmEfStr.length >= 12 ? parseInt(tmEfStr.substring(10, 12), 10) : 0;
+                        tmEfMs = new Date(y, m, d, h, min, 0).getTime();
+                    }
 
-                    // 판정: 실제 발효 시각(TM_EF)이 완전히 도래했고, 명시적으로 주의/경보인 경우만 발효로 인정
-                    let isTrulyEffective = (tmEf > 0 && nowKmaTime >= tmEf) && !edTm.includes('예정');
+                    let alertType = '풍랑예비특보';
 
-                    if (lvl.includes('경보') && isTrulyEffective) {
-                        alertType = '풍랑경보';
-                    } else if (lvl.includes('주의') && isTrulyEffective) {
-                        alertType = '풍랑주의보';
+                    // 15시 등 발효 시각이 아직 안 지났으면 무조건 '풍랑예비특보'!
+                    let isTrulyEffective = (tmEfMs > 0 && nowMs >= tmEfMs) && !edTm.includes('예정');
+
+                    if (isTrulyEffective) {
+                        if (lvl.includes('경보') || lvl === '2') {
+                            alertType = '풍랑경보';
+                        } else {
+                            alertType = '풍랑주의보';
+                        }
                     } else {
+                        // 아직 발효 시각 전이면 주의보로 발표되었더라도 예비특보 상태 유지
                         alertType = '풍랑예비특보';
                     }
 
-                    // 💡 [실제 JSON 데이터 명칭(REG_KO) 기반 1:1 직결 매핑]
+                    // 💡 [해역별 매핑]
                     if (regKo.includes('전남북부')) {
                         setSeaWarningWithPriority('서해남부앞바다(전남북부)', alertType);
                     } else if (regKo.includes('전남중부')) {
@@ -1744,7 +1749,7 @@
                 return;
             }
         } catch (e) {
-            // 2. 만약 일반 텍스트 전문 형태로 들어올 경우의 백업 파서
+            // 텍스트 전문 파싱 백업
             let text = rawText.replace(/\r/g, '');
 
             let gMatch = text.match(/o\s*풍랑경보[^\n:]*:\s*([\s\S]*?)(?=\n\s*o|\n\s*\(\d\)|\n\s*<|$)/i);
@@ -1773,7 +1778,6 @@
         }
     }
 
-    // 💡 [네트워크 타임아웃 3.5초 적용: 기상청 API 응답 지연으로 인한 앱 멈춤 원천 방지]
     async function fetchWithTimeout(url, options = {}, timeout = 3500) {
         const controller = new AbortController();
         const id = setTimeout(() => controller.abort(), timeout);
@@ -1787,7 +1791,6 @@
         }
     }
 
-    // 💡 [인코딩 안정화: EUC-KR과 UTF-8 자동 감지]
     async function fetchKmaApi(type, authKey) {
         try {
             const url = `/api/kma?type=${type}&authKey=${encodeURIComponent(authKey)}&_t=${Date.now()}`;
@@ -2075,7 +2078,7 @@
         fetchWeatherRealtime(false);
     }
 
-    // 💡 [기초자료 탭: 방어벽을 구축하여 0.01초 만에 41척 전체 선박을 즉각 렌더링]
+    // 💡 [기초자료 탭: 방어벽을 구축하여 로컬 데이터를 즉시 안전하게 렌더링]
     function render() {
         try {
             const showHiddenToggle = document.getElementById('showHiddenToggle');
