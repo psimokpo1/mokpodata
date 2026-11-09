@@ -1625,6 +1625,7 @@
     };
 
     window.closeRawWarnModal = () => {
+        document.getElementById('raw-warn-text-area').value = latestRawWarnText;
         document.getElementById('raw-warn-modal').style.display = 'none';
     };
 
@@ -1664,13 +1665,12 @@
     function setSeaWarningWithPriority(seaKey, newType) {
         let currentPriority = getAlertPriority(activeSeaWarnings[seaKey]);
         let newPriority = getAlertPriority(newType);
-        // 바깥먼바다의 예비특보가 이미 발효된 안쪽먼바다 주의보를 덮어쓰지 못하도록 차단
         if (newPriority >= currentPriority) {
             activeSeaWarnings[seaKey] = newType;
         }
     }
 
-    // 💡 [기상특보 파싱 엔진 - 실제 수신 JSON 형식 및 우선순위 방어 로직 완벽 적용]
+    // 💡 [기상특보 파싱 엔진 - TM_EF(발효시각) vs 현재시각 대조 및 우선순위 방어 로직 완벽 적용]
     function parseWeatherWarnings(rawText) {
         if (!rawText || rawText.includes('AUTH_ERROR') || rawText.includes('SERVICE_ERROR') || rawText.includes('"status" : 401')) return;
         
@@ -1680,7 +1680,18 @@
             activeSeaWarnings[k] = null;
         }
 
-        // 1. 실제 기상청 JSON 응답 우선 처리
+        // 현재 시각을 KMA 포맷(YYYYMMDDHHmm) 숫자로 생성 (발효 시각 대조용)
+        const now = new Date();
+        const nowKmaTime = parseInt(
+            now.getFullYear() +
+            String(now.getMonth() + 1).padStart(2, '0') +
+            String(now.getDate()).padStart(2, '0') +
+            String(now.getHours()).padStart(2, '0') +
+            String(now.getMinutes()).padStart(2, '0'),
+            10
+        );
+
+        // 1. 실제 기상청 JSON 응답 처리
         try {
             let data = JSON.parse(rawText);
             let items = Array.isArray(data) ? data : (data.items || data.result || []);
@@ -1691,21 +1702,26 @@
                     let wrn = String(item.WRN || '').replace(/\s/g, '');
                     let lvl = String(item.LVL || '').replace(/\s/g, '');
                     let cmd = String(item.CMD || '').replace(/\s/g, '');
+                    let tmEf = parseInt(String(item.TM_EF || '0').trim(), 10);
 
-                    // 해제(3) 통보는 제외
+                    // 해제 통보는 제외
                     if (cmd.includes('해제') || cmd === '3') return;
 
-                    // 풍랑특보(경보/주의보/예비)가 아니면 제외
+                    // 풍랑특보가 아니면 제외
                     if (!wrn.includes('풍랑') && !wrn.includes('해상')) return;
 
                     let alertType = '풍랑주의보';
+
+                    // 💡 [핵심 검증]: 발표는 되었으나 현재시각이 실제 발효시각(TM_EF) 이전인 경우 '풍랑예비특보'로 판정
                     if (lvl.includes('예비') || cmd === '2' || wrn.includes('예비') || regKo.includes('예비')) {
                         alertType = '풍랑예비특보';
+                    } else if (tmEf > 0 && nowKmaTime < tmEf) {
+                        alertType = '풍랑예비특보'; // 아직 발효 시각이 도래하지 않음!
                     } else if (lvl.includes('경보') || lvl === '2') {
                         alertType = '풍랑경보';
                     }
 
-                    // 💡 [실제 JSON 데이터 명칭(REG_KO) 기반 1:1 직결 매핑 및 우선순위 적용]
+                    // 💡 [실제 JSON 데이터 명칭(REG_KO) 기반 1:1 직결 매핑]
                     if (regKo.includes('전남북부')) {
                         setSeaWarningWithPriority('서해남부앞바다(전남북부)', alertType);
                     } else if (regKo.includes('전남중부')) {
@@ -1715,10 +1731,8 @@
                     } else if (regKo.includes('북쪽안쪽먼바다') || (regKo.includes('서해남부') && regKo.includes('북쪽') && regKo.includes('먼바다'))) {
                         setSeaWarningWithPriority('서해남부북쪽안쪽먼바다', alertType);
                     } else if (regKo.includes('남쪽안쪽먼바다') || (regKo.includes('서해남부') && regKo.includes('남쪽') && regKo.includes('먼바다'))) {
-                        // 서해남부남쪽안쪽먼바다가 직접 주의보 발효된 경우 주의보를 우선 확정
                         setSeaWarningWithPriority('서해남부남쪽안쪽먼바다', alertType);
                     } else if (regKo.includes('남쪽바깥먼바다')) {
-                        // 안쪽먼바다에 이미 주의보가 세팅되어 있다면 바깥먼바다의 예비특보가 이를 덮어쓰지 못함
                         setSeaWarningWithPriority('서해남부남쪽안쪽먼바다', alertType);
                     } else if (regKo.includes('남해서부서쪽먼바다') || (regKo.includes('남해서부') && regKo.includes('서쪽'))) {
                         setSeaWarningWithPriority('남해서부서쪽먼바다', alertType);
