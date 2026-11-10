@@ -333,8 +333,94 @@ function parseVesselControlCriteria(rawName, decision, route, notes) {
 }
 
 // ==========================================
-// 4. 상황판 렌더링
+// 4. 상황판 기상 상세 테이블 토글 및 렌더링
 // ==========================================
+window.toggleMeteoDetailRow = function(shipCode) {
+    const detailRow = document.getElementById(`meteo-detail-${shipCode}`);
+    if (!detailRow) return;
+
+    const isShowing = detailRow.style.display !== 'none';
+    detailRow.style.display = isShowing ? 'none' : 'table-row';
+
+    const icon = document.getElementById(`meteo-toggle-icon-${shipCode}`);
+    if (icon) {
+        icon.innerText = isShowing ? '▼' : '▲';
+    }
+};
+
+function buildMeteoSubTableHtml(parsed, shipName, routeName) {
+    if (!parsed.stations || parsed.stations.length === 0) {
+        return `<div style="text-align:center; padding:12px; color:#94A3B8;">연계된 관측소 정보가 없습니다. (선장 또는 파견지 협의 항로)</div>`;
+    }
+
+    let rowsHtml = '';
+    const wLimit = parsed.windLimit || 12.0;
+
+    parsed.stations.forEach(stKey => {
+        const stData = latestBuoyData[stKey];
+        if (!stData) return;
+
+        let agencyBadge = '';
+        if (stData.type === 'buoy') agencyBadge = '<span style="background:#E0F2FE; color:#0369A1; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:10.5px;">기상청 부이</span>';
+        else if (stData.type === 'aws') agencyBadge = '<span style="background:#CCFBF1; color:#0F766E; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:10.5px;">기상청 AWS</span>';
+        else if (stData.type === 'beacon') agencyBadge = '<span style="background:#EDE9FE; color:#6D28D9; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:10.5px;">기상청 등표</span>';
+        else if (stData.type === 'nmpnt') agencyBadge = '<span style="background:#EFF6FF; color:#1D4ED8; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:10.5px;">측위정보원</span>';
+        else if (stData.type === 'khoa') agencyBadge = '<span style="background:#ECFDF5; color:#047857; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:10.5px;">해양조사원</span>';
+
+        const windVal = parseFloat(stData.wind);
+        const hasWind = !isNaN(windVal);
+        let windStyle = '';
+        if (hasWind) {
+            if (windVal >= wLimit) windStyle = 'color:#DC2626; font-weight:bold; background:#FEE2E2;';
+            else if (windVal >= wLimit * 0.85) windStyle = 'color:#D97706; font-weight:bold; background:#FEF3C7;';
+        }
+
+        const sigVal = parseFloat(stData.sigWave);
+        const maxVal = parseFloat(stData.maxWave);
+        let waveStr = '-';
+        if (!isNaN(sigVal) && !isNaN(maxVal)) waveStr = `유의 ${sigVal.toFixed(1)}m / 최대 ${maxVal.toFixed(1)}m`;
+        else if (!isNaN(sigVal)) waveStr = `유의 ${sigVal.toFixed(1)}m`;
+
+        const tideStr = (stData.tide && stData.tide !== '-') ? `${stData.tide} cm` : '-';
+        const windDisplay = hasWind ? `${windVal.toFixed(1)} m/s (${stData.windDir || '-'})` : '<span style="color:#94A3B8;">수신대기</span>';
+
+        rowsHtml += `
+            <tr>
+                <td>${agencyBadge}</td>
+                <td><strong>${stData.name || stKey}</strong></td>
+                <td style="${windStyle}">${windDisplay}</td>
+                <td>${waveStr}</td>
+                <td>${tideStr}</td>
+                <td><span style="color:#059669; font-weight:bold;">정상 연동</span></td>
+            </tr>
+        `;
+    });
+
+    return `
+        <div class="meteo-detail-container">
+            <div class="meteo-detail-header">
+                <span>📊 [${routeName}] ${shipName} — 연계 관측소 실시간 기상 상세 테이블</span>
+                <span style="font-size:11.5px; color:#64748B; font-weight:normal;">선박 통제기준: 풍속 ${wLimit}m/s</span>
+            </div>
+            <table class="meteo-sub-table">
+                <thead>
+                    <tr>
+                        <th style="width: 15%;">관측 기관</th>
+                        <th style="width: 20%;">관측소명</th>
+                        <th style="width: 25%;">풍향 / 풍속</th>
+                        <th style="width: 20%;">파고 (유의/최대)</th>
+                        <th style="width: 10%;">조위 (물높이)</th>
+                        <th style="width: 10%;">상태</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rowsHtml}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
 function renderOperationBoard() {
     const tbody = document.getElementById('board-tbody');
     const mobileContainer = document.getElementById('board-mobile-cards');
@@ -750,18 +836,29 @@ function renderOperationBoard() {
             if (boardFilterMode === 'ok' && status !== 'ok') isFiltered = true;
 
             if (!isFiltered) {
+                // 본선 행 (클릭 시 하단 서브 테이블 드롭다운)
                 rowsHtml += `
-                    <tr>
+                    <tr id="ship-row-${ship.code}">
                         <td><strong>${effectiveRoute}</strong></td>
                         <td>
                             <strong>${cleanName}</strong> 
                             <span style="font-size:11px; color:#64748B;">(${ownParsed.tonnage ? ownParsed.tonnage + 'G/T' : '-'})</span>
                         </td>
-                        <td>${pointDisplay}</td>
-                        <td>${currentDisplay}</td>
+                        <td class="clickable-meteo-cell" onclick="toggleMeteoDetailRow('${ship.code}')" title="클릭 시 실시간 상세 기상 테이블이 펼쳐집니다.">
+                            ${pointDisplay} <span class="meteo-expand-indicator" id="meteo-toggle-icon-${ship.code}">▼</span>
+                        </td>
+                        <td class="clickable-meteo-cell" onclick="toggleMeteoDetailRow('${ship.code}')" title="클릭 시 실시간 상세 기상 테이블이 펼쳐집니다.">
+                            ${currentDisplay}
+                        </td>
                         <td style="color:#475569;">${criteriaDisplay}</td>
                         <td>${statusBadge}</td>
                         <td>${warningCellHtml}</td>
+                    </tr>
+                    <!-- 숨겨진 기상 상세 드롭다운 서브 로우 -->
+                    <tr id="meteo-detail-${ship.code}" class="meteo-detail-row" style="display: none;">
+                        <td colspan="7" style="padding: 0;">
+                            ${buildMeteoSubTableHtml(parsed, cleanName, effectiveRoute)}
+                        </td>
                     </tr>
                 `;
 
@@ -1023,7 +1120,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
 
         let updatedCount = 0;
 
-        // 1. 기상청 부이
         if (textBuoy && !textBuoy.includes('AUTH_ERROR') && !textBuoy.includes('"status"')) {
             const lines = textBuoy.split('\n');
             const targetBuoys = [
@@ -1069,7 +1165,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             });
         }
 
-        // 2. 기상청 AWS
         if (textAws && !textAws.includes('AUTH_ERROR') && !textAws.includes('"status"')) {
             const awsLines = textAws.split('\n');
             for (let line of awsLines) {
@@ -1098,7 +1193,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             }
         }
 
-        // 3. 기상청 등표
         if (textBeacon && !textBeacon.includes('AUTH_ERROR') && !textBeacon.includes('"status"')) {
             const bLines = textBeacon.split('\n');
             for (let line of bLines) {
@@ -1125,7 +1219,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             }
         }
 
-        // 4. 측위정보원 등대
         if (dataNmpnt && dataNmpnt.result && dataNmpnt.result.recordset) {
             const records = dataNmpnt.result.recordset;
             records.forEach(item => {
@@ -1175,7 +1268,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             });
         }
 
-        // 5. 국립해양조사원 실시간 관측자료 (목포 조위/풍속 등)
         if (dataKhoaMokpo && dataKhoaMokpo.result && dataKhoaMokpo.result.data) {
             const kData = dataKhoaMokpo.result.data;
             const ws = parseFloat(kData.wind_speed);
@@ -1192,7 +1284,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             }
         }
 
-        // 6. 특보 파싱
         if (textWarn) {
             parseWeatherWarnings(textWarn);
         }
@@ -1212,9 +1303,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
     }
 };
 
-// ==========================================
-// 6. 타이머 및 UI 상호작용
-// ==========================================
 function startCountdownTimer() {
     stopCountdownTimer();
     
@@ -1284,7 +1372,7 @@ function manualRefreshWeather() {
 }
 
 // ==========================================
-// 7. 선박 기초자료 UI 렌더링 & 모달 제어
+// 6. 선박 기초자료 UI 렌더링 & 모달 제어
 // ==========================================
 function render() {
     try {
@@ -2214,6 +2302,9 @@ window.openApiSettingModal = () => {
     document.getElementById('kma-api-key-input').value = currentKey;
     let nmpntKey = localStorage.getItem("nmpnt_service_key") || DEFAULT_NMPNT_KEY;
     document.getElementById('nmpnt-key-input').value = nmpntKey;
+    let khoaKey = localStorage.getItem("khoa_api_key") || DEFAULT_KHOA_KEY;
+    let khoaInput = document.getElementById('khoa-key-input');
+    if (khoaInput) khoaInput.value = khoaKey;
     
     document.getElementById('chk-sea-1').checked = !!activeSeaWarnings['서해남부북쪽안쪽먼바다'];
     document.getElementById('chk-sea-2').checked = !!activeSeaWarnings['서해남부남쪽안쪽먼바다'];
@@ -2256,9 +2347,13 @@ window.saveApiKeyModal = () => {
     }
 
     let nmpntKey = document.getElementById('nmpnt-key-input').value.trim() || DEFAULT_NMPNT_KEY;
+    let khoaInput = document.getElementById('khoa-key-input');
+    let khoaKey = khoaInput ? (khoaInput.value.trim() || DEFAULT_KHOA_KEY) : DEFAULT_KHOA_KEY;
+
     localStorage.setItem("kma_apihub_authkey", key);
     localStorage.setItem("nmpnt_service_key", nmpntKey);
-    alert(`✅ 설정 완료!\n기상청 키: ${key}\n측위원 키: ${nmpntKey}\n\n실시간 통신을 다시 시도합니다.`);
+    localStorage.setItem("khoa_api_key", khoaKey);
+    alert(`✅ 설정 완료!\n기상청 키: ${key}\n측위원 키: ${nmpntKey}\n조사원 키: ${khoaKey}\n\n실시간 통신을 다시 시도합니다.`);
     closeApiSettingModal();
     fetchWeatherRealtime();
 };
