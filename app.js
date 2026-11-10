@@ -26,6 +26,7 @@ let latestRawWarnText = "기상청 특보 통보문을 수신 중입니다...";
 
 const DEFAULT_KMA_AUTHKEY = "s0C3VEw6ScOAt1RMOinDFQ";
 const DEFAULT_NMPNT_KEY = "A8ECE1B4-0A1E-43E9-A5D4-7D4D906FC401";
+const DEFAULT_KHOA_KEY = "47f38047094726017ef3dadeff2e4c2733c634c7878d7aa7f56a6a5b226c9eb3";
 
 function degToDirection(deg) {
     if (isNaN(deg) || deg === null || deg === undefined) return "북서";
@@ -35,6 +36,7 @@ function degToDirection(deg) {
 }
 
 let latestBuoyData = {
+    // [기상청 부이/등표/AWS]
     '신안':       { stnId: '22183',   type: 'buoy',   name: '신안 부이',       wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
     '추자도':     { stnId: '22184',   type: 'buoy',   name: '추자도 부이',     wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
     '칠발도':     { stnId: '22102',   type: 'buoy',   name: '칠발도 부이',     wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
@@ -43,12 +45,17 @@ let latestBuoyData = {
     '흑산도':     { stnId: '22193',   type: 'buoy',   name: '흑산도 부이',     wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
     '옥도':       { stnId: '308',     type: 'aws',    name: '옥도 AWS',        wind: '-', windDir: '-', sigWave: null, maxWave: null },
     '해수서파고': { stnId: '959',     type: 'beacon', name: '해수서 등표',     wind: '-', windDir: '-', sigWave: null, maxWave: null },
+    // [측위정보원 등대/터미널]
     '안좌':       { stnId: '1079001', type: 'nmpnt',  name: '안좌터미널(측위)', wind: '-', windDir: '-', sigWave: null, maxWave: null },
     '외달도':     { stnId: '1079008', type: 'nmpnt',  name: '외달도등표(측위)', wind: '-', windDir: '-', sigWave: null, maxWave: null },
     '가거도등대': { stnId: '1079003', type: 'nmpnt',  name: '가거도등대(측위)', wind: '-', windDir: '-', sigWave: null, maxWave: null },
     '홍도등대':   { stnId: '1079002', type: 'nmpnt',  name: '홍도등대(측위)',   wind: '-', windDir: '-', sigWave: null, maxWave: null },
     '하조도':     { stnId: '1079005', type: 'nmpnt',  name: '하조도등대(측위)', wind: '-', windDir: '-', sigWave: null, maxWave: null },
-    '계마항':     { stnId: '1079007', type: 'nmpnt',  name: '계마항등대(측위)', wind: '-', windDir: '-', sigWave: null, maxWave: null }
+    '계마항':     { stnId: '1079007', type: 'nmpnt',  name: '계마항등대(측위)', wind: '-', windDir: '-', sigWave: null, maxWave: null },
+    // [국립해양조사원 실시간 관측소]
+    '목포조위':   { obsCode: 'DT_0016', type: 'khoa', name: '목포조위(조사원)', wind: '-', windDir: '-', sigWave: null, maxWave: null, tide: '-' },
+    '진도조위':   { obsCode: 'DT_0030', type: 'khoa', name: '진도조위(조사원)', wind: '-', windDir: '-', sigWave: null, maxWave: null, tide: '-' },
+    '흑산조위':   { obsCode: 'DT_0029', type: 'khoa', name: '흑산조위(조사원)', wind: '-', windDir: '-', sigWave: null, maxWave: null, tide: '-' }
 };
 
 let activeSeaWarnings = {
@@ -248,6 +255,14 @@ function parseVesselControlCriteria(rawName, decision, route, notes) {
     }
     if (fullText.includes("추자도") || r.includes("제주")) {
         if (!stations.includes('추자도')) stations.push('추자도');
+    }
+
+    // 조사원 관측소 자동 연계 (목포항, 진도, 흑산도 연안 참조)
+    if (r.includes("목포-외달") || r.includes("목포-제주") || fullText.includes("목포항")) {
+        if (!stations.includes('목포조위')) stations.push('목포조위');
+    }
+    if (r.includes("진도") || r.includes("쉬미") || fullText.includes("진도")) {
+        if (!stations.includes('진도조위')) stations.push('진도조위');
     }
 
     if (stations.length === 0) {
@@ -505,6 +520,7 @@ function renderOperationBoard() {
                     let isAws = (stData.type === 'aws');
                     let isBeacon = (stData.type === 'beacon');
                     let isNmpnt = (stData.type === 'nmpnt');
+                    let isKhoa = (stData.type === 'khoa');
 
                     let windVal = parseFloat(stData.wind);
                     let hasRealWind = !isNaN(windVal);
@@ -521,7 +537,7 @@ function renderOperationBoard() {
                     let hasRealSig = !isNaN(sigVal);
                     let hasRealMax = !isNaN(maxVal);
 
-                    if (!isAws && !isBeacon && !isNmpnt) {
+                    if (!isAws && !isBeacon && !isNmpnt && !isKhoa) {
                         if (parsed.sigWaveLimit && hasRealSig) {
                             if (sigVal >= parsed.sigWaveLimit) waveDang = true;
                             else if (sigVal >= (parsed.sigWaveLimit * 0.85)) waveWarn = true;
@@ -545,7 +561,17 @@ function renderOperationBoard() {
                         waveText = `최대 ${maxVal.toFixed(1)}m`;
                     }
 
-                    if (isNmpnt) {
+                    if (isKhoa) {
+                        let tideStr = (stData.tide && stData.tide !== '-') ? ` / 조위 ${stData.tide}cm` : '';
+                        stationPoints.push(`🌊 <span style="color:#059669; font-weight:bold;">${stTitle}</span>`);
+                        stationRenders.push(`
+                            <div style="margin-bottom:3px;">
+                                <span style="color:#059669; font-weight:bold; font-size:11px;">[${stTitle}]</span> 
+                                <span style="${wDang ? 'color:#DC2626; font-weight:bold;' : (wWarn ? 'color:#D97706; font-weight:bold;' : '')}">풍속: ${windText}${tideStr}</span>
+                            </div>
+                        `);
+                        mobileMeteoItems.push(`🌊 <b>${stTitle}</b> ${hasRealWind ? windVal.toFixed(1) + 'm/s' : '대기'}${tideStr}`);
+                    } else if (isNmpnt) {
                         let icon = stTitle.includes('터미널') ? '🏢' : '🗼';
                         stationPoints.push(`${icon} <span style="color:#2563EB; font-weight:bold;">${stTitle}</span>`);
                         stationRenders.push(`
@@ -980,19 +1006,24 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
 
     try {
         let nmpntKey = localStorage.getItem("nmpnt_service_key") || DEFAULT_NMPNT_KEY;
+        let khoaKey = localStorage.getItem("khoa_api_key") || DEFAULT_KHOA_KEY;
 
-        const [textBuoy, textWarn, textAws, textBeacon, dataNmpnt] = await Promise.all([
+        const [textBuoy, textWarn, textAws, textBeacon, dataNmpnt, dataKhoaMokpo] = await Promise.all([
             fetchKmaApi("buoy", authKey).catch(e => { console.error("부이 에러:", e); return null; }),
             fetchKmaApi("warn", authKey).catch(e => { console.error("특보 에러:", e); return null; }),
             fetchKmaApi("aws", authKey).catch(e => { console.error("AWS 에러:", e); return null; }),
             fetchKmaApi("beacon", authKey).catch(e => { console.error("등표 에러:", e); return null; }),
             fetchWithTimeout(`/api/nmpnt?serviceKey=${encodeURIComponent(nmpntKey)}&_t=${Date.now()}`, {}, 3500)
                 .then(r => r.json())
-                .catch(e => { console.error("측위정보원 에러:", e); return null; })
+                .catch(e => { console.error("측위정보원 에러:", e); return null; }),
+            fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=DT_0016&_t=${Date.now()}`, {}, 3500)
+                .then(r => r.json())
+                .catch(e => { console.error("해양조사원 목포 에러:", e); return null; })
         ]);
 
         let updatedCount = 0;
 
+        // 1. 기상청 부이
         if (textBuoy && !textBuoy.includes('AUTH_ERROR') && !textBuoy.includes('"status"')) {
             const lines = textBuoy.split('\n');
             const targetBuoys = [
@@ -1038,6 +1069,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             });
         }
 
+        // 2. 기상청 AWS
         if (textAws && !textAws.includes('AUTH_ERROR') && !textAws.includes('"status"')) {
             const awsLines = textAws.split('\n');
             for (let line of awsLines) {
@@ -1066,6 +1098,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             }
         }
 
+        // 3. 기상청 등표
         if (textBeacon && !textBeacon.includes('AUTH_ERROR') && !textBeacon.includes('"status"')) {
             const bLines = textBeacon.split('\n');
             for (let line of bLines) {
@@ -1092,6 +1125,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             }
         }
 
+        // 4. 측위정보원 등대
         if (dataNmpnt && dataNmpnt.result && dataNmpnt.result.recordset) {
             const records = dataNmpnt.result.recordset;
             records.forEach(item => {
@@ -1141,6 +1175,24 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             });
         }
 
+        // 5. 국립해양조사원 실시간 관측자료 (목포 조위/풍속 등)
+        if (dataKhoaMokpo && dataKhoaMokpo.result && dataKhoaMokpo.result.data) {
+            const kData = dataKhoaMokpo.result.data;
+            const ws = parseFloat(kData.wind_speed);
+            const wd = parseFloat(kData.wind_dir);
+            const tideLevel = kData.tide_level;
+
+            if (!isNaN(ws) && ws >= 0) {
+                latestBuoyData['목포조위'].wind = ws.toFixed(1);
+                latestBuoyData['목포조위'].windDir = (!isNaN(wd) && wd >= 0) ? degToDirection(wd) : '북서풍';
+                if (tideLevel !== undefined && tideLevel !== null) {
+                    latestBuoyData['목포조위'].tide = tideLevel;
+                }
+                updatedCount++;
+            }
+        }
+
+        // 6. 특보 파싱
         if (textWarn) {
             parseWeatherWarnings(textWarn);
         }
@@ -1160,6 +1212,9 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
     }
 };
 
+// ==========================================
+// 6. 타이머 및 UI 상호작용
+// ==========================================
 function startCountdownTimer() {
     stopCountdownTimer();
     
@@ -1229,7 +1284,7 @@ function manualRefreshWeather() {
 }
 
 // ==========================================
-// 6. 선박 기초자료 UI 렌더링 & 모달 제어
+// 7. 선박 기초자료 UI 렌더링 & 모달 제어
 // ==========================================
 function render() {
     try {
@@ -2059,8 +2114,8 @@ window.deleteShip = (shipCode) => {
             isDeleted: true,
             updatedAt: firebase.firestore.FieldValue.serverTimestamp()
         }, { merge: true })
-        .then(() => alert("선박이 목록에서 삭제되었습니다."))
-        .catch(err => alert("삭제 실패: " + err.message));
+            .then(() => alert("선박이 목록에서 삭제되었습니다."))
+            .catch(err => alert("삭제 실패: " + err.message));
     }
 };
 
@@ -2209,7 +2264,7 @@ window.saveApiKeyModal = () => {
 };
 
 // ==========================================
-// 7. 페이지 초기 로드 트리거
+// 8. 초기 렌더링 트리거
 // ==========================================
 document.addEventListener("DOMContentLoaded", () => {
     try {
