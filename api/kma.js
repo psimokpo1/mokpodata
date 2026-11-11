@@ -1,10 +1,15 @@
 // api/kma.js
 export default async function handler(req, res) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
+    }
+
     const { type, authKey = 's0C3VEw6ScOAt1RMOinDFQ' } = req.query;
-
     const cleanKey = String(authKey).trim();
-    let targetUrl = '';
 
+    let targetUrl = '';
     if (type === 'buoy') {
         targetUrl = `https://apihub-pub.kma.go.kr/api/typ01/url/sea_obs.php?stn=0&help=1&authKey=${encodeURIComponent(cleanKey)}`;
     } else if (type === 'warn') {
@@ -14,7 +19,6 @@ export default async function handler(req, res) {
     } else if (type === 'beacon') {
         targetUrl = `https://apihub-pub.kma.go.kr/api/typ01/url/lgt_obs.php?help=1&authKey=${encodeURIComponent(cleanKey)}`;
     } else {
-        res.setHeader('Access-Control-Allow-Origin', '*');
         return res.status(400).send("INVALID_TYPE");
     }
 
@@ -24,15 +28,16 @@ export default async function handler(req, res) {
             cache: 'no-store'
         });
 
-        const buffer = await response.arrayBuffer();
+        if (!response.ok) {
+            return res.status(response.status).send(`KMA_UPSTREAM_ERROR_${response.status}`);
+        }
 
-        res.setHeader('Access-Control-Allow-Origin', '*');
+        const buffer = await response.arrayBuffer();
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
         res.setHeader('Content-Type', 'text/plain; charset=euc-kr');
         return res.send(Buffer.from(buffer));
     } catch (error) {
         console.error("KMA Proxy Fetch Error:", error);
-        res.setHeader('Access-Control-Allow-Origin', '*');
         return res.status(500).send(`API Fetch Error: ${error.message}`);
     }
 }
