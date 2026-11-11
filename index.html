@@ -8,7 +8,7 @@
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-    <!-- 분리된 외부 CSS 파일 연결 -->
+    <!-- 분리된 외부 스타일시트 연결 -->
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -92,6 +92,15 @@
         <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
             <button class="btn-weather-refresh" onclick="manualRefreshWeather()">🔄 실시간 기상 조회</button>
             <button class="btn-raw-warn" onclick="openRawWarnModal()">📄 전국 기상특보 통보문</button>
+            
+            <!-- 💡 기준 시각 선택 (타임머신 기능: 과거 시간 선택 시 기준 시각 역산) -->
+            <div class="interval-select-box">
+                <span>🕒 기준시각:</span>
+                <select id="time-machine-select" class="time-machine-select" onchange="handleTimeMachineChange(this.value)">
+                    <option value="" selected>🕒 실시간 (현재 시각)</option>
+                </select>
+            </div>
+
             <div class="timer-badge-group">
                 <span class="badge-clock" id="current-clock">🕒 현재시각: --:--:--</span>
                 <span class="badge-last-recv" id="weather-last-updated">📡 수신 대기 중</span>
@@ -146,27 +155,22 @@
     <div class="edit-box" style="max-width:440px;">
         <h3 style="border-bottom-color:#8B5CF6;">🚢 예비선 대체 투입 설정</h3>
         <input type="hidden" id="deploy-ship-code">
-        
         <div style="font-size:13px; font-weight:bold; color:#1E293B; margin-bottom:12px;">
             대상 예비선: <span id="deploy-ship-name" style="color:#8B5CF6;"></span>
         </div>
-
         <div class="form-group">
             <label>대체 투입할 본선(항로) 선택</label>
             <select id="deploy-target-select"></select>
         </div>
-
         <div style="font-size:12px; color:#64748B; background:#F8FAFC; padding:10px; border-radius:6px; line-height:1.6; margin-top:10px;">
             💡 <strong>운항 편성 원칙:</strong><br>
-            • <strong>고유 제원 유지:</strong> 예비선 본래의 톤수(G/T)와 여객정원은 그대로 유지됩니다.<br>
-            • <strong>기상/항해제원 승계:</strong> 선택한 본선의 통제기준, 관측계소, 관할 특보구역, 선속·거리·시간을 100% 승계받습니다.<br>
-            • <strong>항로 영구 유지:</strong> 본선을 '선박 숨기기' 처리하더라도 예비선이 그 항로를 온전히 계승하므로 <strong>상황판과 기초자료에서 항로가 절대 사라지지 않습니다.</strong><br>
-            • <strong>깔끔한 관제 화면:</strong> 실시간 운항상황판에는 관제에 불필요한 라벨 및 해제 버튼을 생략하여 선명과 제원만 깔끔하게 표출됩니다.
+            • <strong>고유 제원 유지:</strong> 예비선 본래의 톤수(G/T)와 정원은 유지됩니다.<br>
+            • <strong>기상/항해제원 승계:</strong> 선택한 본선의 통제기준, 관측계소, 특보구역, 운항거리를 승계합니다.<br>
+            • <strong>항로 영구 유지:</strong> 본선을 숨겨도 예비선이 항로를 승계하므로 화면에서 항로가 사라지지 않습니다.
         </div>
-
         <div class="edit-actions" style="margin-top:16px;">
             <button class="btn-cancel" onclick="closeDeployModal()">취소</button>
-            <button class="btn-action" style="background:#EF4444; color:white;" id="btn-deploy-reset" onclick="saveDeployStatus(null)">투입 해제 (복귀)</button>
+            <button class="btn-action" style="background:#EF4444; color:white;" id="btn-deploy-reset" onclick="saveDeployStatus(null)">투입 해제</button>
             <button class="btn-save" style="background:#8B5CF6;" onclick="executeDeploySave()">대체 투입 확정</button>
         </div>
     </div>
@@ -176,7 +180,6 @@
 <div id="raw-warn-modal" class="app-modal">
     <div class="edit-box" style="max-width:680px;">
         <h3 style="border-bottom-color:#334155;">📄 전국 기상특보 통보문 원본 전문</h3>
-        <div style="font-size:12px; color:#64748B; margin-bottom:8px;">기상청 API 실시간 수신 통보문 전문입니다.</div>
         <textarea id="raw-warn-text-area" readonly style="width:100%; height:320px; font-family:monospace; font-size:12px; padding:10px; background:#F8FAFC; border:1px solid #CBD5E1; border-radius:6px; box-sizing:border-box; outline:none; line-height:1.6;"></textarea>
         <div class="edit-actions">
             <button class="btn-cancel" onclick="closeRawWarnModal()">닫기</button>
@@ -188,18 +191,20 @@
 <div id="api-modal" class="app-modal">
     <div class="edit-box" style="max-width:460px;">
         <h3 style="border-bottom-color:#0284C7;">⚙️ 기상청 API & 풍랑특보 설정</h3>
-        
         <div class="form-group">
             <label>기상청 API 인증키 (authKey)</label>
             <input type="text" id="kma-api-key-input" placeholder="기상청 인증키">
         </div>
         <div class="form-group">
             <label>국립해양측위정보원 서비스키 (serviceKey)</label>
-            <input type="text" id="nmpnt-key-input" placeholder="국립해양측위정보원 서비스키">
+            <input type="text" id="nmpnt-key-input" placeholder="측위정보원 키">
         </div>
-
+        <div class="form-group">
+            <label>국립해양조사원 인증키 (ServiceKey)</label>
+            <input type="text" id="khoa-key-input" placeholder="해양조사원 키">
+        </div>
         <div style="margin-top:16px; padding:12px; background:#F8FAFC; border:1px solid #E2E8F0; border-radius:6px;">
-            <div style="font-size:12px; font-weight:bold; color:#0F172A; margin-bottom:6px;">🚨 관할 해역 풍랑특보 수동 체크 (체크 시 즉시 테이블에 반영)</div>
+            <div style="font-size:12px; font-weight:bold; color:#0F172A; margin-bottom:6px;">🚨 관할 해역 풍랑특보 수동 체크</div>
             <div style="display:flex; flex-direction:column; gap:6px; font-size:12px;">
                 <label><input type="checkbox" id="chk-sea-1" onchange="toggleManualWarning('서해남부북쪽안쪽먼바다', this.checked)"> 서해남부북쪽안쪽먼바다 풍랑주의보(발효중)</label>
                 <label><input type="checkbox" id="chk-sea-2" onchange="toggleManualWarning('서해남부남쪽안쪽먼바다', this.checked)"> 서해남부남쪽안쪽먼바다 풍랑주의보(발효중)</label>
@@ -210,7 +215,6 @@
                 <label><input type="checkbox" id="chk-sea-7" onchange="toggleManualWarning('제주도북부앞바다', this.checked)"> 제주도북부앞바다 풍랑주의보(발효중)</label>
             </div>
         </div>
-
         <div class="edit-actions">
             <button class="btn-cancel" onclick="closeApiSettingModal()">닫기</button>
             <button class="btn-save" onclick="saveApiKeyModal()">저장 및 실시간 갱신</button>
@@ -223,51 +227,28 @@
     <div class="edit-box">
         <h3 id="edit-vessel-title">✏️ 정보 및 사진 수정</h3>
         <input type="hidden" id="edit-vessel-key">
-        <div class="form-group">
-            <label>선명 / 톤수 / 통제기준 / 제원</label>
-            <textarea id="edit-raw-name" rows="3"></textarea>
-        </div>
-        <div class="form-group">
-            <label>항로</label>
-            <input type="text" id="edit-route">
-        </div>
-        <div class="form-group">
-            <label>선사</label>
-            <input type="text" id="edit-company">
-        </div>
-        <div class="form-group">
-            <label>기항지</label>
-            <textarea id="edit-ports" rows="2"></textarea>
-        </div>
-        <div class="form-group">
-            <label>여객정원 (명)</label>
-            <input type="text" id="edit-capacity">
-        </div>
-        <div class="form-group">
-            <label>운항결정 기준</label>
-            <textarea id="edit-decision" rows="3"></textarea>
-        </div>
-        <div class="form-group">
-            <label>비고 (운항시간/특보구역 등)</label>
-            <textarea id="edit-notes" rows="3"></textarea>
-        </div>
+        <div class="form-group"><label>선명 / 톤수 / 통제기준</label><textarea id="edit-raw-name" rows="3"></textarea></div>
+        <div class="form-group"><label>항로</label><input type="text" id="edit-route"></div>
+        <div class="form-group"><label>선사</label><input type="text" id="edit-company"></div>
+        <div class="form-group"><label>기항지</label><textarea id="edit-ports" rows="2"></textarea></div>
+        <div class="form-group"><label>여객정원</label><input type="text" id="edit-capacity"></div>
+        <div class="form-group"><label>운항결정 기준</label><textarea id="edit-decision" rows="3"></textarea></div>
+        <div class="form-group"><label>비고</label><textarea id="edit-notes" rows="3"></textarea></div>
         <div class="file-upload-section">
-            <div class="file-upload-row">
-                <label style="font-size:12px; font-weight:bold; color:#0F172A;">📷 선박 대표 사진 변경 (선택)</label>
-                <input type="file" id="upload-ship-photo" accept="image/*">
-            </div>
+            <label style="font-size:12px; font-weight:bold;">📷 선박 대표 사진 변경</label>
+            <input type="file" id="upload-ship-photo" accept="image/*">
         </div>
         <div class="tt-manager-box">
-            <div style="font-size:12px; font-weight:bold; color:#6D28D9; margin-bottom:8px;">📅 커스텀 시간표 이미지 추가</div>
+            <div style="font-size:12px; font-weight:bold; color:#6D28D9; margin-bottom:8px;">📅 커스텀 시간표 추가</div>
             <div id="timetables-container"></div>
-            <button type="button" class="btn-add-field" style="background:#F3E8FF; color:#6D28D9; border-color:#C084FC;" onclick="addTimetableRow()">➕ 시간표 항목 추가</button>
+            <button type="button" class="btn-add-field" onclick="addTimetableRow()">➕ 시간표 추가</button>
         </div>
         <div class="custom-fields-box">
-            <div style="font-size:12px; font-weight:bold; color:#334155; margin-bottom:8px;">📌 추가 정보 항목 (자유 추가)</div>
+            <div style="font-size:12px; font-weight:bold; margin-bottom:8px;">📌 추가 항목</div>
             <div id="custom-fields-container"></div>
             <button type="button" class="btn-add-field" onclick="addCustomFieldRow()">➕ 항목 추가</button>
         </div>
-        <div id="upload-status">⏳ 클라우드 저장 중... 잠시만 기다려주세요.</div>
+        <div id="upload-status">⏳ 저장 중...</div>
         <div class="edit-actions">
             <button class="btn-cancel" onclick="closeEditModal()">취소</button>
             <button id="btn-save-edit" class="btn-save" onclick="saveVesselUpdate()">저장하기</button>
@@ -279,45 +260,19 @@
 <div id="add-modal" class="app-modal">
     <div class="edit-box">
         <h3>➕ 신규 관리선박 등록</h3>
-        <div class="form-group">
-            <label>선박 고유코드 (필수, 예: F200)</label>
-            <input type="text" id="add-code" placeholder="예: F200">
-        </div>
-        <div class="form-group">
-            <label>선명 및 통제기준 (필수)</label>
-            <textarea id="add-raw-name" rows="3" placeholder="예: 목포사랑호 (300G/T)&#10;(통제기준: 12m/s, 최대파고 2.5m)"></textarea>
-        </div>
-        <div class="form-group">
-            <label>소속 항로 (필수, 예비선은 '예비선' 입력)</label>
-            <input type="text" id="add-route" placeholder="예: 목포-외달">
-        </div>
-        <div class="form-group">
-            <label>선사</label>
-            <input type="text" id="add-company">
-        </div>
-        <div class="form-group">
-            <label>기항지</label>
-            <textarea id="add-ports" rows="2"></textarea>
-        </div>
-        <div class="form-group">
-            <label>여객정원 (명)</label>
-            <input type="text" id="add-capacity">
-        </div>
-        <div class="form-group">
-            <label>운항결정 기준</label>
-            <textarea id="add-decision" rows="3"></textarea>
-        </div>
-        <div class="form-group">
-            <label>비고</label>
-            <textarea id="add-notes" rows="3"></textarea>
-        </div>
+        <div class="form-group"><label>선박 고유코드 (예: F200)</label><input type="text" id="add-code"></div>
+        <div class="form-group"><label>선명 및 통제기준</label><textarea id="add-raw-name" rows="3"></textarea></div>
+        <div class="form-group"><label>소속 항로</label><input type="text" id="add-route"></div>
+        <div class="form-group"><label>선사</label><input type="text" id="add-company"></div>
+        <div class="form-group"><label>기항지</label><textarea id="add-ports" rows="2"></textarea></div>
+        <div class="form-group"><label>여객정원</label><input type="text" id="add-capacity"></div>
+        <div class="form-group"><label>운항결정 기준</label><textarea id="add-decision" rows="3"></textarea></div>
+        <div class="form-group"><label>비고</label><textarea id="add-notes" rows="3"></textarea></div>
         <div class="file-upload-section">
-            <div class="file-upload-row">
-                <label style="font-size:12px; font-weight:bold; color:#0F172A;">📷 선박 대표 사진 등록 (선택)</label>
-                <input type="file" id="add-ship-photo" accept="image/*">
-            </div>
+            <label style="font-size:12px; font-weight:bold;">📷 선박 대표 사진</label>
+            <input type="file" id="add-ship-photo" accept="image/*">
         </div>
-        <div id="add-upload-status">⏳ 선박 등록 중... 잠시만 기다려주세요.</div>
+        <div id="add-upload-status">⏳ 등록 중...</div>
         <div class="edit-actions">
             <button class="btn-cancel" onclick="closeAddModal()">취소</button>
             <button id="btn-save-add" class="btn-save" onclick="saveNewShip()">등록하기</button>
@@ -325,22 +280,14 @@
     </div>
 </div>
 
-<!-- 참고자료 추가/수정 모달 -->
+<!-- 참고자료 모달 -->
 <div id="ref-modal" class="app-modal">
     <div class="edit-box" style="max-width:420px;">
         <h3 id="ref-modal-title">➕ 참고자료 설정</h3>
         <input type="hidden" id="ref-item-id">
-        <div class="form-group">
-            <label>참고자료 제목</label>
-            <input type="text" id="ref-item-title" placeholder="예: 🗺️ 기상특보 해역지도">
-        </div>
-        <div class="file-upload-section">
-            <div class="file-upload-row">
-                <label style="font-size:12px; font-weight:bold; color:#0F172A;">🖼️ 참고자료 이미지 파일 선택</label>
-                <input type="file" id="upload-ref-file" accept="image/*">
-            </div>
-        </div>
-        <div id="ref-upload-status">⏳ 이미지 업로드 중...</div>
+        <div class="form-group"><label>제목</label><input type="text" id="ref-item-title"></div>
+        <div class="file-upload-section"><input type="file" id="upload-ref-file" accept="image/*"></div>
+        <div id="ref-upload-status">⏳ 업로드 중...</div>
         <div class="edit-actions">
             <button class="btn-cancel" onclick="closeRefModal()">취소</button>
             <button id="btn-save-ref" class="btn-save" onclick="saveRefUpdate()">저장하기</button>
@@ -353,7 +300,7 @@
     <div class="modal-top-bar">
         <div id="mCap" class="modal-title">🚢 사진 보기</div>
         <div class="modal-btn-group">
-            <button type="button" id="btn-modal-delete" class="btn-modal-delete" onclick="handleDirectViewerDelete()">🗑️ 이 사진 삭제</button>
+            <button type="button" id="btn-modal-delete" class="btn-modal-delete" onclick="handleDirectViewerDelete()">🗑️ 사진 삭제</button>
             <button type="button" class="btn-modal-close" onclick="closeViewerModal()">닫기 ✕</button>
         </div>
     </div>
