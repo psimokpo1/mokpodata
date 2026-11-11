@@ -1,16 +1,10 @@
 // api/kma.js
 export default async function handler(req, res) {
-    const { type, authKey } = req.query;
+    const { type, authKey = 's0C3VEw6ScOAt1RMOinDFQ' } = req.query;
 
-    if (!authKey) {
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        return res.status(400).send("AUTH_KEY_REQUIRED");
-    }
-
-    const cleanKey = authKey.trim();
+    const cleanKey = String(authKey).trim();
     let targetUrl = '';
 
-    // 실시간 고정 공식 엔드포인트 (불필요한 시간 변수 완전 배제)
     if (type === 'buoy') {
         targetUrl = `https://apihub-pub.kma.go.kr/api/typ01/url/sea_obs.php?stn=0&help=1&authKey=${encodeURIComponent(cleanKey)}`;
     } else if (type === 'warn') {
@@ -26,7 +20,7 @@ export default async function handler(req, res) {
 
     try {
         const response = await fetch(targetUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0' },
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
             cache: 'no-store'
         });
 
