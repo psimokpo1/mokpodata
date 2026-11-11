@@ -23,6 +23,7 @@ let boardFilterMode = 'all';
 let countdownIntervalId = null;
 let nextRefreshRemainingSec = 300;
 let latestRawWarnText = "기상청 특보 통보문을 수신 중입니다...";
+let currentSelectedTargetTime = ""; // 타임머신 기준 시각 ("" = 실시간, "YYYYMMDDHH" 형태)
 
 const DEFAULT_KMA_AUTHKEY = "s0C3VEw6ScOAt1RMOinDFQ";
 const DEFAULT_NMPNT_KEY = "A8ECE1B4-0A1E-43E9-A5D4-7D4D906FC401";
@@ -35,27 +36,43 @@ function degToDirection(deg) {
     return dirs[idx] + "풍";
 }
 
+// 💡 1시간 단위 정시 슬롯(현재 ~ 과거 6시간) 계산 함수
+function getHourlySlots(baseDate = new Date()) {
+    let slots = [];
+    for (let i = 0; i <= 6; i++) {
+        let d = new Date(baseDate.getTime() - (i * 3600 * 1000));
+        let yyyy = d.getFullYear();
+        let mm = String(d.getMonth() + 1).padStart(2, '0');
+        let dd = String(d.getDate()).padStart(2, '0');
+        let hh = String(d.getHours()).padStart(2, '0');
+        let key = `${yyyy}${mm}${dd}${hh}`; // YYYYMMDDHH 형태의 정규화 키
+        let label = (i === 0) ? `현재(${hh}:00)` : `-${i}h(${hh}:00)`;
+        slots.push({ key: key, label: label, dateObj: d, hour: hh });
+    }
+    return slots;
+}
+
 let latestBuoyData = {
     // [기상청 부이/등표/AWS]
-    '신안':       { stnId: '22183',   type: 'buoy',   name: '신안 부이',       wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
-    '추자도':     { stnId: '22184',   type: 'buoy',   name: '추자도 부이',     wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
-    '칠발도':     { stnId: '22102',   type: 'buoy',   name: '칠발도 부이',     wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
-    '홍도':       { stnId: '22298',   type: 'buoy',   name: '홍도 부이',       wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
-    '가거도':     { stnId: '22297',   type: 'buoy',   name: '가거도 부이',     wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
-    '흑산도':     { stnId: '22193',   type: 'buoy',   name: '흑산도 부이',     wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
-    '옥도':       { stnId: '308',     type: 'aws',    name: '옥도 AWS',        wind: '-', windDir: '-', sigWave: null, maxWave: null },
-    '해수서파고': { stnId: '959',     type: 'beacon', name: '해수서 등표',     wind: '-', windDir: '-', sigWave: null, maxWave: null },
+    '신안':       { stnId: '22183',   type: 'buoy',   name: '신안 부이',       wind: '-', windDir: '-', sigWave: '-', maxWave: '-', history: {} },
+    '추자도':     { stnId: '22184',   type: 'buoy',   name: '추자도 부이',     wind: '-', windDir: '-', sigWave: '-', maxWave: '-', history: {} },
+    '칠발도':     { stnId: '22102',   type: 'buoy',   name: '칠발도 부이',     wind: '-', windDir: '-', sigWave: '-', maxWave: '-', history: {} },
+    '홍도':       { stnId: '22298',   type: 'buoy',   name: '홍도 부이',       wind: '-', windDir: '-', sigWave: '-', maxWave: '-', history: {} },
+    '가거도':     { stnId: '22297',   type: 'buoy',   name: '가거도 부이',     wind: '-', windDir: '-', sigWave: '-', maxWave: '-', history: {} },
+    '흑산도':     { stnId: '22193',   type: 'buoy',   name: '흑산도 부이',     wind: '-', windDir: '-', sigWave: '-', maxWave: '-', history: {} },
+    '옥도':       { stnId: '308',     type: 'aws',    name: '옥도 AWS',        wind: '-', windDir: '-', sigWave: null, maxWave: null, history: {} },
+    '해수서파고': { stnId: '959',     type: 'beacon', name: '해수서 등표',     wind: '-', windDir: '-', sigWave: null, maxWave: null, history: {} },
     // [측위정보원 등대/터미널]
-    '안좌':       { stnId: '1079001', type: 'nmpnt',  name: '안좌터미널(측위)', wind: '-', windDir: '-', sigWave: null, maxWave: null },
-    '외달도':     { stnId: '1079008', type: 'nmpnt',  name: '외달도등표(측위)', wind: '-', windDir: '-', sigWave: null, maxWave: null },
-    '가거도등대': { stnId: '1079003', type: 'nmpnt',  name: '가거도등대(측위)', wind: '-', windDir: '-', sigWave: null, maxWave: null },
-    '홍도등대':   { stnId: '1079002', type: 'nmpnt',  name: '홍도등대(측위)',   wind: '-', windDir: '-', sigWave: null, maxWave: null },
-    '하조도':     { stnId: '1079005', type: 'nmpnt',  name: '하조도등대(측위)', wind: '-', windDir: '-', sigWave: null, maxWave: null },
-    '계마항':     { stnId: '1079007', type: 'nmpnt',  name: '계마항등대(측위)', wind: '-', windDir: '-', sigWave: null, maxWave: null },
+    '안좌':       { stnId: '1079001', type: 'nmpnt',  name: '안좌터미널(측위)', wind: '-', windDir: '-', sigWave: null, maxWave: null, history: {} },
+    '외달도':     { stnId: '1079008', type: 'nmpnt',  name: '외달도등표(측위)', wind: '-', windDir: '-', sigWave: null, maxWave: null, history: {} },
+    '가거도등대': { stnId: '1079003', type: 'nmpnt',  name: '가거도등대(측위)', wind: '-', windDir: '-', sigWave: null, maxWave: null, history: {} },
+    '홍도등대':   { stnId: '1079002', type: 'nmpnt',  name: '홍도등대(측위)',   wind: '-', windDir: '-', sigWave: null, maxWave: null, history: {} },
+    '하조도':     { stnId: '1079005', type: 'nmpnt',  name: '하조도등대(측위)', wind: '-', windDir: '-', sigWave: null, maxWave: null, history: {} },
+    '계마항':     { stnId: '1079007', type: 'nmpnt',  name: '계마항등대(측위)', wind: '-', windDir: '-', sigWave: null, maxWave: null, history: {} },
     // [국립해양조사원 실시간 관측소]
-    '목포조위':   { obsCode: 'DT_0016', type: 'khoa', name: '목포조위(조사원)', wind: '-', windDir: '-', sigWave: null, maxWave: null, tide: '-' },
-    '진도조위':   { obsCode: 'DT_0030', type: 'khoa', name: '진도조위(조사원)', wind: '-', windDir: '-', sigWave: null, maxWave: null, tide: '-' },
-    '흑산조위':   { obsCode: 'DT_0029', type: 'khoa', name: '흑산조위(조사원)', wind: '-', windDir: '-', sigWave: null, maxWave: null, tide: '-' }
+    '목포조위':   { obsCode: 'DT_0016', type: 'khoa', name: '목포조위(조사원)', wind: '-', windDir: '-', sigWave: null, maxWave: null, tide: '-', history: {} },
+    '진도조위':   { obsCode: 'DT_0030', type: 'khoa', name: '진도조위(조사원)', wind: '-', windDir: '-', sigWave: null, maxWave: null, tide: '-', history: {} },
+    '흑산조위':   { obsCode: 'DT_0029', type: 'khoa', name: '흑산조위(조사원)', wind: '-', windDir: '-', sigWave: null, maxWave: null, tide: '-', history: {} }
 };
 
 let activeSeaWarnings = {
@@ -88,6 +105,7 @@ auth.onAuthStateChanged(user => {
         document.getElementById("user-id-text").innerText = `👤 ${displayId}`;
         initRealtimeSync();
         loadSavedApiKey();
+        initTimeMachineSelect();
     } else {
         if (overlay) overlay.style.display = "flex";
         if (userBar) userBar.style.display = "none";
@@ -177,7 +195,36 @@ function initRealtimeSync() {
 }
 
 // ==========================================
-// 3. 선박 통제기준 파서
+// 3. 타임머신 드롭다운 초기화 및 제어
+// ==========================================
+function initTimeMachineSelect() {
+    const sel = document.getElementById('time-machine-select');
+    if (!sel) return;
+    sel.innerHTML = '<option value="" selected>🕒 실시간 (현재 시각)</option>';
+
+    const now = new Date();
+    for (let i = 1; i <= 24; i++) {
+        let d = new Date(now.getTime() - (i * 3600 * 1000));
+        let yyyy = d.getFullYear();
+        let mm = String(d.getMonth() + 1).padStart(2, '0');
+        let dd = String(d.getDate()).padStart(2, '0');
+        let hh = String(d.getHours()).padStart(2, '0');
+        let val = `${yyyy}${mm}${dd}${hh}`;
+        
+        let opt = document.createElement('option');
+        opt.value = val;
+        opt.innerText = `⏳ -${i}시간 전 (${mm}/${dd} ${hh}:00)`;
+        sel.appendChild(opt);
+    }
+}
+
+window.handleTimeMachineChange = function(targetVal) {
+    currentSelectedTargetTime = targetVal || "";
+    fetchWeatherRealtime(false);
+};
+
+// ==========================================
+// 4. 선박 통제기준 파서
 // ==========================================
 function parseVesselControlCriteria(rawName, decision, route, notes) {
     let fullText = ((rawName || '') + " " + (decision || '') + " " + (notes || '')).replace(/\s/g, '');
@@ -257,7 +304,6 @@ function parseVesselControlCriteria(rawName, decision, route, notes) {
         if (!stations.includes('추자도')) stations.push('추자도');
     }
 
-    // 조사원 관측소 자동 연계 (목포항, 진도, 흑산도 연안 참조)
     if (r.includes("목포-외달") || r.includes("목포-제주") || fullText.includes("목포항")) {
         if (!stations.includes('목포조위')) stations.push('목포조위');
     }
@@ -333,7 +379,7 @@ function parseVesselControlCriteria(rawName, decision, route, notes) {
 }
 
 // ==========================================
-// 4. 상황판 기상 상세 테이블 토글 및 렌더링
+// 5. 6시간 시계열 드롭다운 테이블 렌더링 엔진
 // ==========================================
 window.toggleMeteoDetailRow = function(shipCode) {
     const detailRow = document.getElementById(`meteo-detail-${shipCode}`);
@@ -343,9 +389,7 @@ window.toggleMeteoDetailRow = function(shipCode) {
     detailRow.style.display = isShowing ? 'none' : 'table-row';
 
     const icon = document.getElementById(`meteo-toggle-icon-${shipCode}`);
-    if (icon) {
-        icon.innerText = isShowing ? '▼' : '▲';
-    }
+    if (icon) icon.innerText = isShowing ? '▼' : '▲';
 };
 
 function buildMeteoSubTableHtml(parsed, shipName, routeName) {
@@ -353,45 +397,66 @@ function buildMeteoSubTableHtml(parsed, shipName, routeName) {
         return `<div style="text-align:center; padding:12px; color:#94A3B8;">연계된 관측소 정보가 없습니다. (선장 또는 파견지 협의 항로)</div>`;
     }
 
-    let rowsHtml = '';
+    let baseD = currentSelectedTargetTime ? parseKmaTimeString(currentSelectedTargetTime) : new Date();
+    let slots = getHourlySlots(baseD); // [현재, -1h, -2h, -3h, -4h, -5h, -6h]
     const wLimit = parsed.windLimit || 12.0;
+
+    let thSlotsHtml = slots.map(s => `<th>${s.label}</th>`).join('');
+    let rowsHtml = '';
 
     parsed.stations.forEach(stKey => {
         const stData = latestBuoyData[stKey];
         if (!stData) return;
 
-        let agencyBadge = '';
-        if (stData.type === 'buoy') agencyBadge = '<span style="background:#E0F2FE; color:#0369A1; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:10.5px;">기상청 부이</span>';
-        else if (stData.type === 'aws') agencyBadge = '<span style="background:#CCFBF1; color:#0F766E; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:10.5px;">기상청 AWS</span>';
-        else if (stData.type === 'beacon') agencyBadge = '<span style="background:#EDE9FE; color:#6D28D9; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:10.5px;">기상청 등표</span>';
-        else if (stData.type === 'nmpnt') agencyBadge = '<span style="background:#EFF6FF; color:#1D4ED8; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:10.5px;">측위정보원</span>';
-        else if (stData.type === 'khoa') agencyBadge = '<span style="background:#ECFDF5; color:#047857; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:10.5px;">해양조사원</span>';
+        let agencyName = '기상청 부이';
+        if (stData.type === 'aws') agencyName = '기상청 AWS';
+        else if (stData.type === 'beacon') agencyName = '기상청 등표';
+        else if (stData.type === 'nmpnt') agencyName = '측위정보원';
+        else if (stData.type === 'khoa') agencyName = '해양조사원';
 
-        const windVal = parseFloat(stData.wind);
-        const hasWind = !isNaN(windVal);
-        let windStyle = '';
-        if (hasWind) {
-            if (windVal >= wLimit) windStyle = 'color:#DC2626; font-weight:bold; background:#FEE2E2;';
-            else if (windVal >= wLimit * 0.85) windStyle = 'color:#D97706; font-weight:bold; background:#FEF3C7;';
+        let slotCellsHtml = '';
+        let windValuesForTrend = [];
+
+        slots.forEach((s, idx) => {
+            let snap = stData.history ? stData.history[s.key] : null;
+            let windVal = snap ? parseFloat(snap.wind) : (idx === 0 ? parseFloat(stData.wind) : NaN);
+            let hasWind = !isNaN(windVal);
+            let waveVal = snap ? parseFloat(snap.sigWave) : (idx === 0 ? parseFloat(stData.sigWave) : NaN);
+            let tideVal = snap ? snap.tide : (idx === 0 ? stData.tide : null);
+
+            let cellBg = '';
+            if (hasWind) {
+                windValuesForTrend.push(windVal);
+                if (windVal >= wLimit) cellBg = 'background:#FEE2E2; color:#DC2626; font-weight:bold;';
+                else if (windVal >= wLimit * 0.85) cellBg = 'background:#FEF3C7; color:#D97706; font-weight:bold;';
+            }
+
+            let cellContent = '-';
+            if (hasWind) {
+                cellContent = `${windVal.toFixed(1)}m/s`;
+                if (!isNaN(waveVal)) cellContent += `<br><span style="font-size:10.5px; color:#0284C7;">파 ${waveVal.toFixed(1)}m</span>`;
+                if (tideVal && tideVal !== '-') cellContent += `<br><span style="font-size:10.5px; color:#059669;">조위 ${tideVal}</span>`;
+            }
+
+            slotCellsHtml += `<td style="${cellBg}">${cellContent}</td>`;
+        });
+
+        // 경향(Trend) 분석
+        let trendHtml = '<span class="trend-flat">― 보합</span>';
+        if (windValuesForTrend.length >= 2) {
+            let latestW = windValuesForTrend[0];
+            let oldestW = windValuesForTrend[windValuesForTrend.length - 1];
+            let diff = latestW - oldestW;
+            if (diff >= 1.5) trendHtml = `<span class="trend-up">▲ 상승세 (+${diff.toFixed(1)})</span>`;
+            else if (diff <= -1.5) trendHtml = `<span class="trend-down">▼ 하강세 (${diff.toFixed(1)})</span>`;
         }
-
-        const sigVal = parseFloat(stData.sigWave);
-        const maxVal = parseFloat(stData.maxWave);
-        let waveStr = '-';
-        if (!isNaN(sigVal) && !isNaN(maxVal)) waveStr = `유의 ${sigVal.toFixed(1)}m / 최대 ${maxVal.toFixed(1)}m`;
-        else if (!isNaN(sigVal)) waveStr = `유의 ${sigVal.toFixed(1)}m`;
-
-        const tideStr = (stData.tide && stData.tide !== '-') ? `${stData.tide} cm` : '-';
-        const windDisplay = hasWind ? `${windVal.toFixed(1)} m/s (${stData.windDir || '-'})` : '<span style="color:#94A3B8;">수신대기</span>';
 
         rowsHtml += `
             <tr>
-                <td>${agencyBadge}</td>
+                <td style="font-size:11px; color:#64748B;">${agencyName}</td>
                 <td><strong>${stData.name || stKey}</strong></td>
-                <td style="${windStyle}">${windDisplay}</td>
-                <td>${waveStr}</td>
-                <td>${tideStr}</td>
-                <td><span style="color:#059669; font-weight:bold;">정상 연동</span></td>
+                ${slotCellsHtml}
+                <td>${trendHtml}</td>
             </tr>
         `;
     });
@@ -399,18 +464,16 @@ function buildMeteoSubTableHtml(parsed, shipName, routeName) {
     return `
         <div class="meteo-detail-container">
             <div class="meteo-detail-header">
-                <span>📊 [${routeName}] ${shipName} — 연계 관측소 실시간 기상 상세 테이블</span>
+                <span>📊 [${routeName}] ${shipName} — 연계 관측소 실시간 및 최근 6시간 관측 현황 (정시 정규화)</span>
                 <span style="font-size:11.5px; color:#64748B; font-weight:normal;">선박 통제기준: 풍속 ${wLimit}m/s</span>
             </div>
             <table class="meteo-sub-table">
                 <thead>
                     <tr>
-                        <th style="width: 15%;">관측 기관</th>
-                        <th style="width: 20%;">관측소명</th>
-                        <th style="width: 25%;">풍향 / 풍속</th>
-                        <th style="width: 20%;">파고 (유의/최대)</th>
-                        <th style="width: 10%;">조위 (물높이)</th>
-                        <th style="width: 10%;">상태</th>
+                        <th style="width: 11%;">구분</th>
+                        <th style="width: 15%;">관측소명</th>
+                        ${thSlotsHtml}
+                        <th style="width: 12%;">6시간 경향</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -421,6 +484,19 @@ function buildMeteoSubTableHtml(parsed, shipName, routeName) {
     `;
 }
 
+function parseKmaTimeString(str) {
+    if (!str || str.length < 10) return new Date();
+    let y = parseInt(str.substring(0, 4), 10);
+    let m = parseInt(str.substring(4, 6), 10) - 1;
+    let d = parseInt(str.substring(6, 8), 10);
+    let h = parseInt(str.substring(8, 10), 10);
+    let min = str.length >= 12 ? parseInt(str.substring(10, 12), 10) : 0;
+    return new Date(y, m, d, h, min, 0);
+}
+
+// ==========================================
+// 6. 상황판 테이블 렌더링
+// ==========================================
 function renderOperationBoard() {
     const tbody = document.getElementById('board-tbody');
     const mobileContainer = document.getElementById('board-mobile-cards');
@@ -459,31 +535,26 @@ function renderOperationBoard() {
     let deployedMap = {};
     for (let c in allShipsMap) {
         let s = allShipsMap[c];
-        if (!s.isDeleted && s.deployedTarget) {
-            deployedMap[s.deployedTarget] = s;
-        }
+        if (!s.isDeleted && s.deployedTarget) deployedMap[s.deployedTarget] = s;
     }
 
     let displayList = [];
     for (let c in allShipsMap) {
         let s = allShipsMap[c];
         if (s.isDeleted) continue;
-
         let isOriginalReserve = (s.route || '').trim() === '예비선';
         let isDeployedReserve = isOriginalReserve && !!s.deployedTarget;
-
         if (isOriginalReserve && !isDeployedReserve) continue;
         if (s.isHidden && !isDeployedReserve) continue;
-
         displayList.push(s);
     }
 
     displayList.sort((a, b) => {
         let aTarget = a.deployedTarget ? allShipsMap[a.deployedTarget] : null;
         let bTarget = b.deployedTarget ? allShipsMap[b.deployedTarget] : null;
-        let aEffectiveRoute = aTarget ? aTarget.route : a.route;
-        let bEffectiveRoute = bTarget ? bTarget.route : b.route;
-        return (aEffectiveRoute || '').localeCompare(bEffectiveRoute || '', 'ko');
+        let aRoute = aTarget ? aTarget.route : a.route;
+        let bRoute = bTarget ? bTarget.route : b.route;
+        return (aRoute || '').localeCompare(bRoute || '', 'ko');
     });
 
     let countTotal = displayList.length;
@@ -539,17 +610,6 @@ function renderOperationBoard() {
                         <td style="color:#94A3B8;">-</td>
                     </tr>
                 `;
-
-                let rKey = ship.route || '기타항로';
-                if (!mobileGroups[rKey]) {
-                    mobileGroups[rKey] = { route: rKey, isReserve: false, warnings: [], meteoSummary: '휴항/정비', ships: [] };
-                }
-                mobileGroups[rKey].ships.push({
-                    name: cleanName,
-                    tonnage: ownParsed.tonnage,
-                    statusBadge: `<span class="status-badge badge-off">⚪ 휴항/정비 (${subCleanName} 대선)</span>`,
-                    criteriaText: '정비휴항'
-                });
                 return;
             }
 
@@ -563,13 +623,10 @@ function renderOperationBoard() {
                     let alertType = activeSeaWarnings[sea];
                     if (alertType) {
                         activeWarningItems.push({ sea: sea, alert: alertType });
-                        if (alertType.includes('예비') || alertType.includes('예정')) {
-                            hasPreWarning = true;
-                        } else {
+                        if (alertType.includes('예비') || alertType.includes('예정')) hasPreWarning = true;
+                        else {
                             hasRealIssuedWarning = true;
-                            if (alertType.includes('경보')) {
-                                hasGaleGyeongbo = true;
-                            }
+                            if (alertType.includes('경보')) hasGaleGyeongbo = true;
                         }
                     }
                 }
@@ -582,17 +639,13 @@ function renderOperationBoard() {
             let pointDisplay = '';
 
             let isAutoControlledByWarning = false;
-            if (hasRealIssuedWarning && parsed.tonnage <= 2000 && !parsed.isPyungSuOnly && !parsed.isYulmokRoute) {
-                isAutoControlledByWarning = true;
-            }
+            if (hasRealIssuedWarning && parsed.tonnage <= 2000 && !parsed.isPyungSuOnly && !parsed.isYulmokRoute) isAutoControlledByWarning = true;
 
             let wLimit = parsed.windLimit || 12.0;
             let isAnyWindDanger = false;
             let isAnyWindWarn = false;
             let isAnyWaveDanger = false;
             let isAnyWaveWarn = false;
-
-            let mobileMeteoItems = [];
 
             if (parsed.stations && parsed.stations.length > 0) {
                 let stationPoints = [];
@@ -611,221 +664,84 @@ function renderOperationBoard() {
                     let windVal = parseFloat(stData.wind);
                     let hasRealWind = !isNaN(windVal);
 
-                    let wDang = hasRealWind && (windVal >= wLimit);
-                    let wWarn = hasRealWind && (windVal >= (wLimit * 0.85));
-                    if (wDang) isAnyWindDanger = true;
-                    if (wWarn) isAnyWindWarn = true;
+                    if (hasRealWind && (windVal >= wLimit)) isAnyWindDanger = true;
+                    if (hasRealWind && (windVal >= (wLimit * 0.85))) isAnyWindWarn = true;
 
-                    let waveDang = false;
-                    let waveWarn = false;
                     let sigVal = parseFloat(stData.sigWave);
                     let maxVal = parseFloat(stData.maxWave);
                     let hasRealSig = !isNaN(sigVal);
                     let hasRealMax = !isNaN(maxVal);
 
                     if (!isAws && !isBeacon && !isNmpnt && !isKhoa) {
-                        if (parsed.sigWaveLimit && hasRealSig) {
-                            if (sigVal >= parsed.sigWaveLimit) waveDang = true;
-                            else if (sigVal >= (parsed.sigWaveLimit * 0.85)) waveWarn = true;
-                        }
-                        if (parsed.maxWaveLimit && hasRealMax) {
-                            if (maxVal >= parsed.maxWaveLimit) waveDang = true;
-                            else if (maxVal >= (parsed.maxWaveLimit * 0.85)) waveWarn = true;
-                        }
-                        if (waveDang) isAnyWaveDanger = true;
-                        if (waveWarn) isAnyWaveWarn = true;
+                        if (parsed.sigWaveLimit && hasRealSig && sigVal >= parsed.sigWaveLimit) isAnyWaveDanger = true;
+                        if (parsed.maxWaveLimit && hasRealMax && maxVal >= parsed.maxWaveLimit) isAnyWaveDanger = true;
                     }
 
                     let windText = hasRealWind ? `${windVal.toFixed(1)}m/s (${stData.windDir || '북서풍'})` : `<span style="color:#94A3B8;">수신대기</span>`;
-                    
                     let waveText = `<span style="color:#94A3B8;">수신대기</span>`;
-                    if (hasRealSig && hasRealMax) {
-                        waveText = `유의 ${sigVal.toFixed(1)}m (최대 ${maxVal.toFixed(1)}m)`;
-                    } else if (hasRealSig) {
-                        waveText = `유의 ${sigVal.toFixed(1)}m`;
-                    } else if (hasRealMax) {
-                        waveText = `최대 ${maxVal.toFixed(1)}m`;
-                    }
+                    if (hasRealSig && hasRealMax) waveText = `유의 ${sigVal.toFixed(1)}m (최대 ${maxVal.toFixed(1)}m)`;
+                    else if (hasRealSig) waveText = `유의 ${sigVal.toFixed(1)}m`;
 
                     if (isKhoa) {
                         let tideStr = (stData.tide && stData.tide !== '-') ? ` / 조위 ${stData.tide}cm` : '';
                         stationPoints.push(`🌊 <span style="color:#059669; font-weight:bold;">${stTitle}</span>`);
-                        stationRenders.push(`
-                            <div style="margin-bottom:3px;">
-                                <span style="color:#059669; font-weight:bold; font-size:11px;">[${stTitle}]</span> 
-                                <span style="${wDang ? 'color:#DC2626; font-weight:bold;' : (wWarn ? 'color:#D97706; font-weight:bold;' : '')}">풍속: ${windText}${tideStr}</span>
-                            </div>
-                        `);
-                        mobileMeteoItems.push(`🌊 <b>${stTitle}</b> ${hasRealWind ? windVal.toFixed(1) + 'm/s' : '대기'}${tideStr}`);
+                        stationRenders.push(`<div style="margin-bottom:3px;"><span style="color:#059669; font-weight:bold; font-size:11px;">[${stTitle}]</span> 풍속: ${windText}${tideStr}</div>`);
                     } else if (isNmpnt) {
-                        let icon = stTitle.includes('터미널') ? '🏢' : '🗼';
-                        stationPoints.push(`${icon} <span style="color:#2563EB; font-weight:bold;">${stTitle}</span>`);
-                        stationRenders.push(`
-                            <div style="margin-bottom:3px;">
-                                <span style="color:#2563EB; font-weight:bold; font-size:11px;">[${stTitle}]</span> 
-                                <span style="${wDang ? 'color:#DC2626; font-weight:bold;' : (wWarn ? 'color:#D97706; font-weight:bold;' : '')}">풍속: ${windText}</span>
-                            </div>
-                        `);
-                        mobileMeteoItems.push(`${icon} <b>${stTitle}</b> ${hasRealWind ? windVal.toFixed(1) + 'm/s' : '대기'}`);
+                        stationPoints.push(`🏢 <span style="color:#2563EB; font-weight:bold;">${stTitle}</span>`);
+                        stationRenders.push(`<div style="margin-bottom:3px;"><span style="color:#2563EB; font-weight:bold; font-size:11px;">[${stTitle}]</span> 풍속: ${windText}</div>`);
                     } else if (isAws) {
                         stationPoints.push(`📡 <span style="color:#0D9488; font-weight:bold;">${stTitle}</span>`);
-                        stationRenders.push(`
-                            <div style="margin-bottom:3px;">
-                                <span style="color:#0D9488; font-weight:bold; font-size:11px;">[${stTitle}]</span> 
-                                <span style="${wDang ? 'color:#DC2626; font-weight:bold;' : (wWarn ? 'color:#D97706; font-weight:bold;' : '')}">풍속: ${windText}</span>
-                            </div>
-                        `);
-                        mobileMeteoItems.push(`📡 <b>${stTitle}</b> ${hasRealWind ? windVal.toFixed(1) + 'm/s' : '대기'}`);
+                        stationRenders.push(`<div style="margin-bottom:3px;"><span style="color:#0D9488; font-weight:bold; font-size:11px;">[${stTitle}]</span> 풍속: ${windText}</div>`);
                     } else if (isBeacon) {
                         stationPoints.push(`🗼 <span style="color:#7C3AED; font-weight:bold;">${stTitle}</span>`);
-                        stationRenders.push(`
-                            <div style="margin-bottom:3px;">
-                                <span style="color:#7C3AED; font-weight:bold; font-size:11px;">[${stTitle}]</span> 
-                                <span style="${wDang ? 'color:#DC2626; font-weight:bold;' : (wWarn ? 'color:#D97706; font-weight:bold;' : '')}">풍속: ${windText}</span>
-                            </div>
-                        `);
-                        mobileMeteoItems.push(`🗼 <b>${stTitle}</b> ${hasRealWind ? windVal.toFixed(1) + 'm/s' : '대기'}`);
+                        stationRenders.push(`<div style="margin-bottom:3px;"><span style="color:#7C3AED; font-weight:bold; font-size:11px;">[${stTitle}]</span> 풍속: ${windText}</div>`);
                     } else {
                         stationPoints.push(`📍 <span style="color:#0284C7; font-weight:bold;">${stTitle}</span>`);
-                        stationRenders.push(`
-                            <div style="margin-bottom:3px;">
-                                <span style="color:#0284C7; font-weight:bold; font-size:11px;">[${stTitle}]</span> 
-                                <span style="${wDang ? 'color:#DC2626; font-weight:bold;' : (wWarn ? 'color:#D97706; font-weight:bold;' : '')}">풍속: ${windText}</span> / 
-                                <span style="${waveDang ? 'color:#DC2626; font-weight:bold;' : (waveWarn ? 'color:#D97706; font-weight:bold;' : '')}">파고: ${waveText}</span>
-                            </div>
-                        `);
-                        mobileMeteoItems.push(`📍 <b>${stTitle}</b> ${hasRealWind ? windVal.toFixed(1) + 'm/s' : '-'} · ${hasRealSig ? sigVal.toFixed(1) + 'm' : '-'}`);
+                        stationRenders.push(`<div style="margin-bottom:3px;"><span style="color:#0284C7; font-weight:bold; font-size:11px;">[${stTitle}]</span> 풍속: ${windText} / 파고: ${waveText}</div>`);
                     }
                 });
 
                 pointDisplay = stationPoints.join('<br>');
                 currentDisplay = stationRenders.join('');
-
-                let waveCritArr = [];
-                if (parsed.sigWaveLimit) waveCritArr.push(`유의 ${parsed.sigWaveLimit}m`);
-                if (parsed.maxWaveLimit) waveCritArr.push(`최대 ${parsed.maxWaveLimit}m`);
-                criteriaDisplay = `풍속 ${wLimit}m/s<br>${waveCritArr.length > 0 ? waveCritArr.join(' / ') : '파고 2.0m'}`;
+                criteriaDisplay = `풍속 ${wLimit}m/s<br>${parsed.sigWaveLimit ? '유의 ' + parsed.sigWaveLimit + 'm' : '파고 2.0m'}`;
             }
 
             if (parsed.isJejuMegaShip) {
-                if (hasGaleGyeongbo) {
-                    status = 'danger';
-                    statusBadge = '<span class="status-badge badge-danger">🔴 통제위험(풍랑경보)</span>';
-                    countDanger++;
-                } else if (isAnyWindDanger || isAnyWaveDanger) {
-                    status = 'danger';
-                    statusBadge = '<span class="status-badge badge-danger">🔴 수치초과(통제위험)</span>';
-                    countDanger++;
-                } else if (isAnyWindWarn || isAnyWaveWarn) {
-                    status = 'warn';
-                    statusBadge = '<span class="status-badge badge-warn">🟡 기상근접(통제주의)</span>';
-                    countWarn++;
-                } else {
-                    status = 'ok';
-                    statusBadge = '<span class="status-badge badge-ok">🟢 정상 (대형선/정상운항)</span>';
-                    countOk++;
-                }
+                if (hasGaleGyeongbo || isAnyWindDanger || isAnyWaveDanger) { status = 'danger'; statusBadge = '<span class="status-badge badge-danger">🔴 통제위험</span>'; countDanger++; }
+                else if (isAnyWindWarn || isAnyWaveWarn) { status = 'warn'; statusBadge = '<span class="status-badge badge-warn">🟡 통제주의</span>'; countWarn++; }
+                else { status = 'ok'; statusBadge = '<span class="status-badge badge-ok">🟢 정상 (대형선)</span>'; countOk++; }
             } else if (isAutoControlledByWarning) {
-                status = 'danger';
-                statusBadge = '<span class="status-badge badge-danger">🔴 자동통제(특보발효)</span>';
-                countDanger++;
+                status = 'danger'; statusBadge = '<span class="status-badge badge-danger">🔴 자동통제(특보발효)</span>'; countDanger++;
             } else if (parsed.isYulmokRoute) {
-                if (isAnyWindDanger || isAnyWaveDanger) {
-                    status = 'danger';
-                    statusBadge = '<span class="status-badge badge-danger">🔴 수치초과(통제위험)</span>';
-                    countDanger++;
-                } else if (isAnyWindWarn || isAnyWaveWarn || hasPreWarning) {
-                    status = 'warn';
-                    let sub = hasPreWarning ? "특보주의" : "기상주의";
-                    statusBadge = `<span class="status-badge badge-warn">🟡 평수단축운항(${sub})</span>`;
-                    countWarn++;
-                } else {
-                    status = 'ok';
-                    let tag = hasRealIssuedWarning ? "평수구역 단축운항" : "정상운항";
-                    statusBadge = `<span class="status-badge badge-ok">🟢 정상 (${tag})</span>`;
-                    countOk++;
-                }
+                if (isAnyWindDanger || isAnyWaveDanger) { status = 'danger'; statusBadge = '<span class="status-badge badge-danger">🔴 통제위험</span>'; countDanger++; }
+                else if (isAnyWindWarn || isAnyWaveWarn || hasPreWarning) { status = 'warn'; statusBadge = `<span class="status-badge badge-warn">🟡 평수단축운항</span>`; countWarn++; }
+                else { status = 'ok'; statusBadge = `<span class="status-badge badge-ok">🟢 정상</span>`; countOk++; }
             } else if (parsed.isPyungSuOnly) {
-                if (isAnyWindDanger || isAnyWaveDanger) {
-                    status = 'danger';
-                    statusBadge = '<span class="status-badge badge-danger">🔴 수치초과(통제위험)</span>';
-                    countDanger++;
-                } else if (isAnyWindWarn || isAnyWaveWarn) {
-                    status = 'warn';
-                    statusBadge = '<span class="status-badge badge-warn">🟡 통제주의(근접)</span>';
-                    countWarn++;
-                } else {
-                    status = 'ok';
-                    let subLabel = parsed.isJodoPyungsu ? "조도평수구역" : "평수구역";
-                    statusBadge = `<span class="status-badge badge-ok">🟢 정상 (${subLabel})</span>`;
-                    countOk++;
-                }
+                if (isAnyWindDanger || isAnyWaveDanger) { status = 'danger'; statusBadge = '<span class="status-badge badge-danger">🔴 통제위험</span>'; countDanger++; }
+                else if (isAnyWindWarn || isAnyWaveWarn) { status = 'warn'; statusBadge = '<span class="status-badge badge-warn">🟡 통제주의</span>'; countWarn++; }
+                else { status = 'ok'; statusBadge = '<span class="status-badge badge-ok">🟢 정상 (평수)</span>'; countOk++; }
             } else if (parsed.tonnage > 2000) {
-                if (isAnyWindDanger || isAnyWaveDanger) {
-                    status = 'danger';
-                    statusBadge = '<span class="status-badge badge-danger">🔴 수치초과(통제위험)</span>';
-                    countDanger++;
-                } else if (isAnyWindWarn || isAnyWaveWarn || hasPreWarning) {
-                    status = 'warn';
-                    statusBadge = '<span class="status-badge badge-warn">🟡 통제주의(예비/근접)</span>';
-                    countWarn++;
-                } else {
-                    status = 'ok';
-                    statusBadge = '<span class="status-badge badge-ok">🟢 정상 (대형선/여유)</span>';
-                    countOk++;
-                }
+                if (isAnyWindDanger || isAnyWaveDanger) { status = 'danger'; statusBadge = '<span class="status-badge badge-danger">🔴 통제위험</span>'; countDanger++; }
+                else if (isAnyWindWarn || isAnyWaveWarn || hasPreWarning) { status = 'warn'; statusBadge = '<span class="status-badge badge-warn">🟡 통제주의</span>'; countWarn++; }
+                else { status = 'ok'; statusBadge = '<span class="status-badge badge-ok">🟢 정상</span>'; countOk++; }
             } else if (parsed.stations && parsed.stations.length > 0) {
-                if (isAnyWindDanger || isAnyWaveDanger) {
-                    status = 'danger';
-                    statusBadge = '<span class="status-badge badge-danger">🔴 수치초과(통제위험)</span>';
-                    countDanger++;
-                } else if (isAnyWindWarn || isAnyWaveWarn || hasPreWarning) {
-                    status = 'warn';
-                    let sub = hasPreWarning ? "예비/예정특보" : "통제주의";
-                    statusBadge = `<span class="status-badge badge-warn">🟡 ${sub}(근접)</span>`;
-                    countWarn++;
-                } else if (parsed.isCaptainOpinion) {
-                    status = 'captain';
-                    statusBadge = '<span class="status-badge badge-captain">🔵 선장협의(수치참조)</span>';
-                    countSpecial++;
-                } else {
-                    status = 'ok';
-                    statusBadge = '<span class="status-badge badge-ok">🟢 정상 (여유)</span>';
-                    countOk++;
-                }
+                if (isAnyWindDanger || isAnyWaveDanger) { status = 'danger'; statusBadge = '<span class="status-badge badge-danger">🔴 통제위험</span>'; countDanger++; }
+                else if (isAnyWindWarn || isAnyWaveWarn || hasPreWarning) { status = 'warn'; statusBadge = '<span class="status-badge badge-warn">🟡 통제주의(예비/근접)</span>'; countWarn++; }
+                else if (parsed.isCaptainOpinion) { status = 'captain'; statusBadge = '<span class="status-badge badge-captain">🔵 선장협의</span>'; countSpecial++; }
+                else { status = 'ok'; statusBadge = '<span class="status-badge badge-ok">🟢 정상</span>'; countOk++; }
             } else if (parsed.isCaptainOpinion) {
-                status = 'captain';
-                statusBadge = '<span class="status-badge badge-captain">🔵 선장협의(현장확인)</span>';
-                if (!pointDisplay) pointDisplay = '👨‍✈️ 선장 재량/의견';
-                if (!currentDisplay) currentDisplay = '<span style="color:#475569;">현장 기상(선장 확인)</span>';
-                if (!criteriaDisplay) criteriaDisplay = parsed.windLimit ? `풍속 ${parsed.windLimit}m/s` : '선장 재량 통제';
-                countSpecial++;
+                status = 'captain'; statusBadge = '<span class="status-badge badge-captain">🔵 선장협의</span>'; countSpecial++;
             } else if (parsed.isOfficeDecision) {
-                status = 'office';
-                statusBadge = '<span class="status-badge badge-office">🏢 파견지결정(사무소 확인)</span>';
-                if (!pointDisplay) pointDisplay = `🏢 ${parsed.officeName || '파견지'} 결정`;
-                if (!currentDisplay) currentDisplay = '<span style="color:#475569;">파견지 자체 결정</span>';
-                if (!criteriaDisplay) criteriaDisplay = parsed.windLimit ? `풍속 ${parsed.windLimit}m/s` : '파견지 자체 기준';
-                countSpecial++;
+                status = 'office'; statusBadge = '<span class="status-badge badge-office">🏢 파견지결정</span>'; countSpecial++;
             } else {
-                status = 'office';
-                statusBadge = '<span class="status-badge badge-office">운항 계획 확인</span>';
-                pointDisplay = '-';
-                currentDisplay = '-';
-                criteriaDisplay = '-';
-                countSpecial++;
+                status = 'office'; statusBadge = '<span class="status-badge badge-office">운항확인</span>'; countSpecial++;
             }
-
-            if (!pointDisplay) pointDisplay = '-';
-            if (!currentDisplay) currentDisplay = '-';
-            if (!criteriaDisplay) criteriaDisplay = parsed.windLimit ? `풍속 ${parsed.windLimit}m/s` : '-';
 
             let warningCellHtml = '<span style="color:#94A3B8; font-weight:bold;">-</span>';
             if (activeWarningItems.length > 0) {
                 warningCellHtml = activeWarningItems.map(w => {
                     let isAdv = w.alert.includes('예비') || w.alert.includes('예정');
-                    let badgeClass = isAdv ? 'warning-adv' : '';
-                    return `<span class="warn-alert-badge ${badgeClass}">🚨 ${w.sea} ${w.alert}</span>`;
+                    return `<span class="warn-alert-badge ${isAdv ? 'warning-adv' : ''}">🚨 ${w.sea} ${w.alert}</span>`;
                 }).join('<br>');
             }
 
@@ -836,48 +752,27 @@ function renderOperationBoard() {
             if (boardFilterMode === 'ok' && status !== 'ok') isFiltered = true;
 
             if (!isFiltered) {
-                // 본선 행 (클릭 시 하단 서브 테이블 드롭다운)
                 rowsHtml += `
                     <tr id="ship-row-${ship.code}">
                         <td><strong>${effectiveRoute}</strong></td>
-                        <td>
-                            <strong>${cleanName}</strong> 
-                            <span style="font-size:11px; color:#64748B;">(${ownParsed.tonnage ? ownParsed.tonnage + 'G/T' : '-'})</span>
+                        <td><strong>${cleanName}</strong> <span style="font-size:11px; color:#64748B;">(${ownParsed.tonnage ? ownParsed.tonnage + 'G/T' : '-'})</span></td>
+                        <td class="clickable-meteo-cell" onclick="toggleMeteoDetailRow('${ship.code}')" title="클릭 시 최근 6시간 관측 상세 테이블이 펼쳐집니다.">
+                            ${pointDisplay || '-'} <span class="meteo-expand-indicator" id="meteo-toggle-icon-${ship.code}">▼</span>
                         </td>
-                        <td class="clickable-meteo-cell" onclick="toggleMeteoDetailRow('${ship.code}')" title="클릭 시 실시간 상세 기상 테이블이 펼쳐집니다.">
-                            ${pointDisplay} <span class="meteo-expand-indicator" id="meteo-toggle-icon-${ship.code}">▼</span>
+                        <td class="clickable-meteo-cell" onclick="toggleMeteoDetailRow('${ship.code}')" title="클릭 시 최근 6시간 관측 상세 테이블이 펼쳐집니다.">
+                            ${currentDisplay || '-'}
                         </td>
-                        <td class="clickable-meteo-cell" onclick="toggleMeteoDetailRow('${ship.code}')" title="클릭 시 실시간 상세 기상 테이블이 펼쳐집니다.">
-                            ${currentDisplay}
-                        </td>
-                        <td style="color:#475569;">${criteriaDisplay}</td>
+                        <td style="color:#475569;">${criteriaDisplay || '-'}</td>
                         <td>${statusBadge}</td>
                         <td>${warningCellHtml}</td>
                     </tr>
-                    <!-- 숨겨진 기상 상세 드롭다운 서브 로우 -->
+                    <!-- 6시간 정시 시계열 드롭다운 서브 로우 -->
                     <tr id="meteo-detail-${ship.code}" class="meteo-detail-row" style="display: none;">
                         <td colspan="7" style="padding: 0;">
                             ${buildMeteoSubTableHtml(parsed, cleanName, effectiveRoute)}
                         </td>
                     </tr>
                 `;
-
-                let rKey = effectiveRoute || '기타항로';
-                if (!mobileGroups[rKey]) {
-                    mobileGroups[rKey] = {
-                        route: rKey,
-                        isReserve: false,
-                        warnings: activeWarningItems,
-                        meteoSummary: mobileMeteoItems.join(' · ') || '현장/파견지 확인',
-                        ships: []
-                    };
-                }
-                mobileGroups[rKey].ships.push({
-                    name: cleanName,
-                    tonnage: ownParsed.tonnage,
-                    statusBadge: statusBadge,
-                    criteriaText: criteriaDisplay.replace('<br>', ' · ')
-                });
             }
         } catch (errInner) {
             console.error("선박 렌더링 예외:", errInner);
@@ -891,57 +786,10 @@ function renderOperationBoard() {
     document.getElementById('sum-special').innerText = countSpecial;
 
     tbody.innerHTML = rowsHtml || `<tr><td colspan="7" style="text-align:center; padding:20px; color:#94A3B8;">해당 조건에 일치하는 선박이 없습니다.</td></tr>`;
-
-    let mobileCardsHtml = "";
-    Object.keys(mobileGroups).forEach(rKey => {
-        let g = mobileGroups[rKey];
-        let shipsListHtml = g.ships.map(s => `
-            <div class="m-ship-item">
-                <div class="m-ship-info">
-                    <span class="m-ship-title">${s.name} <small style="font-size:11px; color:#64748B; font-weight:normal;">(${s.tonnage ? s.tonnage + 'G/T' : '-'})</small></span>
-                    <span class="m-ship-specs">기준: ${s.criteriaText}</span>
-                </div>
-                <div class="m-ship-right">
-                    ${s.statusBadge}
-                </div>
-            </div>
-        `).join('');
-
-        let warnTagsHtml = '<span class="m-route-warning-tag" style="background:#F1F5F9; color:#475569;">특보 없음</span>';
-        if (g.warnings && g.warnings.length > 0) {
-            warnTagsHtml = g.warnings.map(w => {
-                let isAdv = w.alert.includes('예비') || w.alert.includes('예정');
-                let bg = isAdv ? '#FEF3C7' : '#FEE2E2';
-                let col = isAdv ? '#B45309' : '#DC2626';
-                return `<span class="m-route-warning-tag" style="background:${bg}; color:${col};">🚨 ${w.sea} ${w.alert}</span>`;
-            }).join('');
-        }
-
-        mobileCardsHtml += `
-            <div class="m-route-card">
-                <div class="m-route-header">
-                    <div class="m-route-title-row">
-                        <span class="m-route-name">📍 ${g.route} <span class="m-route-count">(${g.ships.length}척)</span></span>
-                        <div class="m-route-warning-tag-group">
-                            ${warnTagsHtml}
-                        </div>
-                    </div>
-                    <div class="m-route-meteo-strip">
-                        ${g.meteoSummary}
-                    </div>
-                </div>
-                <div class="m-ship-list">
-                    ${shipsListHtml}
-                </div>
-            </div>
-        `;
-    });
-
-    mobileContainer.innerHTML = mobileCardsHtml || `<div style="text-align:center; padding:20px; color:#94A3B8; background:white; border-radius:8px;">해당 조건에 일치하는 선박이 없습니다.</div>`;
 }
 
 // ==========================================
-// 5. 기상특보 파싱 및 통신 엔진
+// 7. 기상특보 파싱 및 통신 엔진 (6시간 시계열 슬롯 정규화)
 // ==========================================
 function setSeaWarningByLatestFc(seaKey, alertType, fcTimeNum) {
     let prevFc = seaWarningTimestamps[seaKey] || 0;
@@ -953,7 +801,6 @@ function setSeaWarningByLatestFc(seaKey, alertType, fcTimeNum) {
 
 function parseWeatherWarnings(rawText) {
     if (!rawText || rawText.includes('AUTH_ERROR') || rawText.includes('SERVICE_ERROR') || rawText.includes('"status" : 401')) return;
-    
     latestRawWarnText = rawText;
 
     for (let k in activeSeaWarnings) {
@@ -961,7 +808,7 @@ function parseWeatherWarnings(rawText) {
         seaWarningTimestamps[k] = 0;
     }
 
-    const nowMs = Date.now();
+    const nowMs = currentSelectedTargetTime ? parseKmaTimeString(currentSelectedTargetTime).getTime() : Date.now();
 
     try {
         let data = JSON.parse(rawText);
@@ -1001,32 +848,19 @@ function parseWeatherWarnings(rawText) {
                     let isGyeongbo = lvl.includes('경보');
                     let baseName = isGyeongbo ? '풍랑경보' : '풍랑주의보';
 
-                    if (tmEfMs > 0 && nowMs < tmEfMs) {
-                        alertType = `${baseName}(발효예정 ${efHourStr})`;
-                    } else if (tmEfMs > 0 && nowMs >= tmEfMs) {
-                        alertType = `${baseName}(발효중)`;
-                    } else {
-                        alertType = '풍랑예비특보';
-                    }
+                    if (tmEfMs > 0 && nowMs < tmEfMs) alertType = `${baseName}(발효예정 ${efHourStr})`;
+                    else if (tmEfMs > 0 && nowMs >= tmEfMs) alertType = `${baseName}(발효중)`;
+                    else alertType = '풍랑예비특보';
                 }
 
-                if (regKo.includes('전남북부')) {
-                    setSeaWarningByLatestFc('서해남부앞바다(전남북부)', alertType, fcTimeNum);
-                } else if (regKo.includes('전남중부')) {
-                    setSeaWarningByLatestFc('서해남부앞바다(전남중부)', alertType, fcTimeNum);
-                } else if (regKo.includes('전남남부')) {
-                    setSeaWarningByLatestFc('서해남부앞바다(전남남부)', alertType, fcTimeNum);
-                } else if (regKo.includes('북쪽안쪽먼바다') || (regKo.includes('서해남부') && regKo.includes('북쪽') && regKo.includes('먼바다'))) {
-                    setSeaWarningByLatestFc('서해남부북쪽안쪽먼바다', alertType, fcTimeNum);
-                } else if (regKo.includes('남쪽안쪽먼바다') || (regKo.includes('서해남부') && regKo.includes('남쪽') && regKo.includes('먼바다'))) {
-                    setSeaWarningByLatestFc('서해남부남쪽안쪽먼바다', alertType, fcTimeNum);
-                } else if (regKo.includes('남쪽바깥먼바다')) {
-                    setSeaWarningByLatestFc('서해남부남쪽안쪽먼바다', alertType, fcTimeNum);
-                } else if (regKo.includes('남해서부서쪽먼바다') || (regKo.includes('남해서부') && regKo.includes('서쪽'))) {
-                    setSeaWarningByLatestFc('남해서부서쪽먼바다', alertType, fcTimeNum);
-                } else if (regKo.includes('제주도북부앞바다') || (regKo.includes('제주도') && regKo.includes('북부앞'))) {
-                    setSeaWarningByLatestFc('제주도북부앞바다', alertType, fcTimeNum);
-                }
+                if (regKo.includes('전남북부')) setSeaWarningByLatestFc('서해남부앞바다(전남북부)', alertType, fcTimeNum);
+                else if (regKo.includes('전남중부')) setSeaWarningByLatestFc('서해남부앞바다(전남중부)', alertType, fcTimeNum);
+                else if (regKo.includes('전남남부')) setSeaWarningByLatestFc('서해남부앞바다(전남남부)', alertType, fcTimeNum);
+                else if (regKo.includes('북쪽안쪽먼바다') || (regKo.includes('서해남부') && regKo.includes('북쪽') && regKo.includes('먼바다'))) setSeaWarningByLatestFc('서해남부북쪽안쪽먼바다', alertType, fcTimeNum);
+                else if (regKo.includes('남쪽안쪽먼바다') || (regKo.includes('서해남부') && regKo.includes('남쪽') && regKo.includes('먼바다'))) setSeaWarningByLatestFc('서해남부남쪽안쪽먼바다', alertType, fcTimeNum);
+                else if (regKo.includes('남쪽바깥먼바다')) setSeaWarningByLatestFc('서해남부남쪽안쪽먼바다', alertType, fcTimeNum);
+                else if (regKo.includes('남해서부서쪽먼바다') || (regKo.includes('남해서부') && regKo.includes('서쪽'))) setSeaWarningByLatestFc('남해서부서쪽먼바다', alertType, fcTimeNum);
+                else if (regKo.includes('제주도북부앞바다') || (regKo.includes('제주도') && regKo.includes('북부앞'))) setSeaWarningByLatestFc('제주도북부앞바다', alertType, fcTimeNum);
             });
             return;
         }
@@ -1066,9 +900,10 @@ async function fetchWithTimeout(url, options = {}, timeout = 3500) {
     }
 }
 
-async function fetchKmaApi(type, authKey) {
+async function fetchKmaApi(type, authKey, targetTimeStr = "") {
     try {
-        const url = `/api/kma?type=${type}&authKey=${encodeURIComponent(authKey)}&_t=${Date.now()}`;
+        let tmParam = targetTimeStr ? `&tm=${targetTimeStr}` : '';
+        const url = `/api/kma?type=${type}&authKey=${encodeURIComponent(authKey)}${tmParam}&_t=${Date.now()}`;
         const response = await fetchWithTimeout(url, {}, 3500);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         
@@ -1083,13 +918,8 @@ async function fetchKmaApi(type, authKey) {
             text = decoderUtf.decode(buffer);
         }
         
-        if (text.includes('"status"') && (text.includes('401') || text.includes('403') || text.includes('404'))) {
-            throw new Error(`기상청 거절: ${text}`);
-        }
-        
-        if (text && !text.includes("API Fetch Error") && text.trim().length > 5) {
-            return text;
-        }
+        if (text.includes('"status"') && (text.includes('401') || text.includes('403') || text.includes('404'))) throw new Error(`기상청 거절: ${text}`);
+        if (text && !text.includes("API Fetch Error") && text.trim().length > 5) return text;
         throw new Error("빈 응답 수신");
     } catch (err) {
         throw new Error(`[${type}] ${err.message}`);
@@ -1104,22 +934,24 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
     try {
         let nmpntKey = localStorage.getItem("nmpnt_service_key") || DEFAULT_NMPNT_KEY;
         let khoaKey = localStorage.getItem("khoa_api_key") || DEFAULT_KHOA_KEY;
+        let tm = currentSelectedTargetTime; // 타임머신 기준 시각
 
-        const [textBuoy, textWarn, textAws, textBeacon, dataNmpnt, dataKhoaMokpo] = await Promise.all([
-            fetchKmaApi("buoy", authKey).catch(e => { console.error("부이 에러:", e); return null; }),
+        const [textBuoy, textWarn, textAws, textBeacon, dataNmpnt, dataKhoaMokpo, dataKhoaHistory] = await Promise.all([
+            fetchKmaApi("buoy", authKey, tm).catch(e => { console.error("부이 에러:", e); return null; }),
             fetchKmaApi("warn", authKey).catch(e => { console.error("특보 에러:", e); return null; }),
-            fetchKmaApi("aws", authKey).catch(e => { console.error("AWS 에러:", e); return null; }),
-            fetchKmaApi("beacon", authKey).catch(e => { console.error("등표 에러:", e); return null; }),
+            fetchKmaApi("aws", authKey, tm).catch(e => { console.error("AWS 에러:", e); return null; }),
+            fetchKmaApi("beacon", authKey, tm).catch(e => { console.error("등표 에러:", e); return null; }),
             fetchWithTimeout(`/api/nmpnt?serviceKey=${encodeURIComponent(nmpntKey)}&_t=${Date.now()}`, {}, 3500)
-                .then(r => r.json())
-                .catch(e => { console.error("측위정보원 에러:", e); return null; }),
-            fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=DT_0016&_t=${Date.now()}`, {}, 3500)
-                .then(r => r.json())
-                .catch(e => { console.error("해양조사원 목포 에러:", e); return null; })
+                .then(r => r.json()).catch(e => { console.error("측위 에러:", e); return null; }),
+            fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=DT_0016&type=tide&_t=${Date.now()}`, {}, 3500)
+                .then(r => r.json()).catch(e => { console.error("조사원 목포 에러:", e); return null; }),
+            fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=DT_0016&type=history&_t=${Date.now()}`, {}, 3500)
+                .then(r => r.json()).catch(e => { console.error("조사원 히스토리 에러:", e); return null; })
         ]);
 
         let updatedCount = 0;
 
+        // 1. 기상청 부이 파싱 및 6시간 슬롯 히스토리 매핑
         if (textBuoy && !textBuoy.includes('AUTH_ERROR') && !textBuoy.includes('"status"')) {
             const lines = textBuoy.split('\n');
             const targetBuoys = [
@@ -1134,45 +966,50 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             lines.forEach(line => {
                 line = line.trim();
                 if (!line || line.startsWith('#')) return;
-
                 const cols = line.split(',').map(c => c.trim());
                 if (cols.length < 9) return;
 
+                const tmStr = cols[1]; // YYYYMMDDHHmm
                 const stnId = cols[2];
+
                 targetBuoys.forEach(tb => {
                     if (stnId === tb.id) {
                         let rawWh = parseFloat(cols[6]);
                         let rawWd = parseFloat(cols[7]);
                         let rawWs = parseFloat(cols[8]);
 
+                        if (!latestBuoyData[tb.key].history) latestBuoyData[tb.key].history = {};
+
+                        if (tmStr && tmStr.length >= 10) {
+                            let slotKey = tmStr.substring(0, 10); // YYYYMMDDHH
+                            latestBuoyData[tb.key].history[slotKey] = {
+                                wind: (!isNaN(rawWs) && rawWs >= 0) ? rawWs.toFixed(1) : '-',
+                                windDir: (!isNaN(rawWd) && rawWd >= 0) ? degToDirection(rawWd) : '-',
+                                sigWave: (!isNaN(rawWh) && rawWh >= 0) ? rawWh.toFixed(1) : '-'
+                            };
+                        }
+
+                        // 최신 관측값 갱신
                         if (!isNaN(rawWs) && rawWs >= 0 && rawWs < 50.0) {
                             latestBuoyData[tb.key].wind = rawWs.toFixed(1);
                             latestBuoyData[tb.key].windDir = (!isNaN(rawWd) && rawWd >= 0) ? degToDirection(rawWd) : '북서풍';
                             updatedCount++;
-                        } else {
-                            latestBuoyData[tb.key].wind = '-';
                         }
-
-                        if (!isNaN(rawWh) && rawWh >= 0.0 && rawWh <= 12.0) {
-                            latestBuoyData[tb.key].sigWave = rawWh.toFixed(1);
-                            latestBuoyData[tb.key].maxWave = '-';
-                        } else {
-                            latestBuoyData[tb.key].sigWave = '-';
-                            latestBuoyData[tb.key].maxWave = '-';
-                        }
+                        if (!isNaN(rawWh) && rawWh >= 0.0 && rawWh <= 12.0) latestBuoyData[tb.key].sigWave = rawWh.toFixed(1);
                     }
                 });
             });
         }
 
+        // 2. 기상청 AWS (옥도)
         if (textAws && !textAws.includes('AUTH_ERROR') && !textAws.includes('"status"')) {
             const awsLines = textAws.split('\n');
             for (let line of awsLines) {
                 line = line.trim();
                 if (!line || line.startsWith('#')) continue;
-
                 const cols = line.split(/[\s,]+/).filter(Boolean);
                 if (cols.length >= 4) {
+                    const tmStr = cols[0];
                     const stn = cols[1];
                     const ws1 = parseFloat(cols[3]);
                     const wd1 = parseFloat(cols[2]);
@@ -1186,6 +1023,11 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                         if (!isNaN(finalWs) && finalWs >= 0) {
                             latestBuoyData['옥도'].wind = finalWs.toFixed(1);
                             latestBuoyData['옥도'].windDir = degToDirection(finalWd);
+                            if (tmStr && tmStr.length >= 10) {
+                                let slotKey = tmStr.substring(0, 10);
+                                if (!latestBuoyData['옥도'].history) latestBuoyData['옥도'].history = {};
+                                latestBuoyData['옥도'].history[slotKey] = { wind: finalWs.toFixed(1), windDir: degToDirection(finalWd) };
+                            }
                             updatedCount++;
                         }
                     }
@@ -1193,25 +1035,25 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             }
         }
 
+        // 3. 기상청 등표 (해수서)
         if (textBeacon && !textBeacon.includes('AUTH_ERROR') && !textBeacon.includes('"status"')) {
             const bLines = textBeacon.split('\n');
             for (let line of bLines) {
                 line = line.trim();
                 if (!line || line.startsWith('#')) continue;
-
                 if (line.includes('959') || line.includes('해수서')) {
                     const cols = line.split(/[\s,]+/).filter(Boolean);
+                    let tmStr = cols[1];
                     let bWd = parseFloat(cols[2]);
                     let bWs = parseFloat(cols[3]);
-
-                    if (bWs > 50 && !isNaN(parseFloat(cols[4])) && parseFloat(cols[4]) <= 50) {
-                        bWd = parseFloat(cols[3]);
-                        bWs = parseFloat(cols[4]);
-                    }
-
                     if (!isNaN(bWs) && bWs >= 0 && bWs < 50) {
                         latestBuoyData['해수서파고'].wind = bWs.toFixed(1);
                         latestBuoyData['해수서파고'].windDir = (!isNaN(bWd) && bWd >= 0) ? degToDirection(bWd) : '북서풍';
+                        if (tmStr && tmStr.length >= 10) {
+                            let slotKey = tmStr.substring(0, 10);
+                            if (!latestBuoyData['해수서파고'].history) latestBuoyData['해수서파고'].history = {};
+                            latestBuoyData['해수서파고'].history[slotKey] = { wind: bWs.toFixed(1), windDir: degToDirection(bWd) };
+                        }
                         updatedCount++;
                         break;
                     }
@@ -1219,6 +1061,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             }
         }
 
+        // 4. 국립해양측위정보원 등대
         if (dataNmpnt && dataNmpnt.result && dataNmpnt.result.recordset) {
             const records = dataNmpnt.result.recordset;
             records.forEach(item => {
@@ -1231,43 +1074,24 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                     const dirStr = (!isNaN(wd) && wd >= 0) ? degToDirection(wd) : '북서풍';
                     const formattedWs = ws.toFixed(1);
 
-                    if (code === '1079001' || name.includes('안좌')) {
-                        latestBuoyData['안좌'].wind = formattedWs;
-                        latestBuoyData['안좌'].windDir = dirStr;
+                    let key = null;
+                    if (code === '1079001' || name.includes('안좌')) key = '안좌';
+                    else if (code === '1079008' || name.includes('외달')) key = '외달도';
+                    else if (code === '1079003' || (name.includes('가거') && name.includes('등대'))) key = '가거도등대';
+                    else if (code === '1079002' || (name.includes('홍도') && name.includes('등대'))) key = '홍도등대';
+                    else if (code === '1079005' || code === '1079004' || name.includes('하조도')) key = '하조도';
+                    else if (code === '1079007' || name.includes('계마')) key = '계마항';
+
+                    if (key && latestBuoyData[key]) {
+                        latestBuoyData[key].wind = formattedWs;
+                        latestBuoyData[key].windDir = dirStr;
                         updatedCount++;
-                    } else if (code === '1079008' || name.includes('외달')) {
-                        latestBuoyData['외달도'].wind = formattedWs;
-                        latestBuoyData['외달도'].windDir = dirStr;
-                        updatedCount++;
-                    } else if (code === '1079003' || (name.includes('가거') && name.includes('등대'))) {
-                        if (latestBuoyData['가거도등대']) {
-                            latestBuoyData['가거도등대'].wind = formattedWs;
-                            latestBuoyData['가거도등대'].windDir = dirStr;
-                            updatedCount++;
-                        }
-                    } else if (code === '1079002' || (name.includes('홍도') && name.includes('등대'))) {
-                        if (latestBuoyData['홍도등대']) {
-                            latestBuoyData['홍도등대'].wind = formattedWs;
-                            latestBuoyData['홍도등대'].windDir = dirStr;
-                            updatedCount++;
-                        }
-                    } else if (code === '1079005' || code === '1079004' || name.includes('하조도') || name.includes('조도')) {
-                        if (latestBuoyData['하조도']) {
-                            latestBuoyData['하조도'].wind = formattedWs;
-                            latestBuoyData['하조도'].windDir = dirStr;
-                            updatedCount++;
-                        }
-                    } else if (code === '1079007' || name.includes('계마')) {
-                        if (latestBuoyData['계마항']) {
-                            latestBuoyData['계마항'].wind = formattedWs;
-                            latestBuoyData['계마항'].windDir = dirStr;
-                            updatedCount++;
-                        }
                     }
                 }
             });
         }
 
+        // 5. 국립해양조사원 실시간 및 히스토리 정규화
         if (dataKhoaMokpo && dataKhoaMokpo.result && dataKhoaMokpo.result.data) {
             const kData = dataKhoaMokpo.result.data;
             const ws = parseFloat(kData.wind_speed);
@@ -1277,20 +1101,35 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             if (!isNaN(ws) && ws >= 0) {
                 latestBuoyData['목포조위'].wind = ws.toFixed(1);
                 latestBuoyData['목포조위'].windDir = (!isNaN(wd) && wd >= 0) ? degToDirection(wd) : '북서풍';
-                if (tideLevel !== undefined && tideLevel !== null) {
-                    latestBuoyData['목포조위'].tide = tideLevel;
-                }
+                if (tideLevel !== undefined && tideLevel !== null) latestBuoyData['목포조위'].tide = tideLevel;
                 updatedCount++;
             }
         }
 
-        if (textWarn) {
-            parseWeatherWarnings(textWarn);
+        if (dataKhoaHistory && dataKhoaHistory.result && dataKhoaHistory.result.data) {
+            const hList = Array.isArray(dataKhoaHistory.result.data) ? dataKhoaHistory.result.data : [dataKhoaHistory.result.data];
+            if (!latestBuoyData['목포조위'].history) latestBuoyData['목포조위'].history = {};
+            hList.forEach(rec => {
+                let recTm = String(rec.record_time || '').replace(/\D/g, ''); // YYYYMMDDHHmm
+                if (recTm.length >= 10) {
+                    let slotKey = recTm.substring(0, 10);
+                    let ws = parseFloat(rec.wind_speed);
+                    latestBuoyData['목포조위'].history[slotKey] = {
+                        wind: !isNaN(ws) ? ws.toFixed(1) : '-',
+                        windDir: degToDirection(parseFloat(rec.wind_dir)),
+                        tide: rec.tide_level || '-'
+                    };
+                }
+            });
         }
 
+        // 6. 특보 파싱
+        if (textWarn) parseWeatherWarnings(textWarn);
+
         if (updatedCount > 0) {
-            if (recvEl) recvEl.innerText = `📡 [실시간 기상] ${new Date().toLocaleTimeString()} (${updatedCount}개소 연동)`;
-            if (!isAuto) alert(`✅ 실시간 관측 데이터 및 풍랑특보가 정상 반영되었습니다!`);
+            let labelText = tm ? `🕒 [과거 조회] ${tm.substring(4,6)}/${tm.substring(6,8)} ${tm.substring(8,10)}:00 기준` : `📡 [실시간] ${new Date().toLocaleTimeString()} (${updatedCount}개소 연동)`;
+            if (recvEl) recvEl.innerText = labelText;
+            if (!isAuto) alert(`✅ 해양기상 관측 데이터 및 시계열 현황이 반영되었습니다!`);
         } else {
             if (recvEl) recvEl.innerText = `⚠️ 수신된 기상 데이터 없음`;
         }
@@ -1303,21 +1142,20 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
     }
 };
 
+// ==========================================
+// 8. 타이머 및 설정 제어
+// ==========================================
 function startCountdownTimer() {
     stopCountdownTimer();
-    
     let sel = document.getElementById('auto-refresh-select');
     let intervalSec = sel ? parseInt(sel.value, 10) : 300;
     nextRefreshRemainingSec = intervalSec;
 
-    const now = new Date();
-    const curTimeStr = now.toTimeString().split(' ')[0];
     const clockEl = document.getElementById('current-clock');
-    if (clockEl) clockEl.innerText = `🕒 현재시각: ${curTimeStr}`;
+    if (clockEl) clockEl.innerText = `🕒 현재시각: ${new Date().toTimeString().split(' ')[0]}`;
 
     countdownIntervalId = setInterval(() => {
-        const now = new Date();
-        const curTimeStr = now.toTimeString().split(' ')[0];
+        const curTimeStr = new Date().toTimeString().split(' ')[0];
         const clockEl = document.getElementById('current-clock');
         if (clockEl) clockEl.innerText = `🕒 현재시각: ${curTimeStr}`;
 
@@ -1325,8 +1163,8 @@ function startCountdownTimer() {
         const selectEl = document.getElementById('auto-refresh-select');
         const curSelVal = selectEl ? parseInt(selectEl.value, 10) : 300;
 
-        if (curSelVal === 0) {
-            if (counterEl) counterEl.innerText = `⏳ 다음 갱신: 정지됨`;
+        if (curSelVal === 0 || currentSelectedTargetTime !== "") {
+            if (counterEl) counterEl.innerText = currentSelectedTargetTime !== "" ? `⏳ 과거조회 고정` : `⏳ 다음 갱신: 정지됨`;
             return;
         }
 
@@ -1372,7 +1210,7 @@ function manualRefreshWeather() {
 }
 
 // ==========================================
-// 6. 선박 기초자료 UI 렌더링 & 모달 제어
+// 9. 선박 기초자료 UI 렌더링 & 모달 제어
 // ==========================================
 function render() {
     try {
@@ -1430,17 +1268,12 @@ function render() {
         for (let c in allMap) {
             let s = allMap[c];
             if (s.isDeleted) continue;
-
             let isOriginalReserve = (s.route || '').trim() === '예비선';
             let isDeployedReserve = isOriginalReserve && !!s.deployedTarget;
-
-            if (s.isHidden && !showHidden && !isDeployedReserve) {
-                continue;
-            }
+            if (s.isHidden && !showHidden && !isDeployedReserve) continue;
 
             let targetShip = isDeployedReserve ? allMap[s.deployedTarget] : null;
             let effectiveRoute = (targetShip ? targetShip.route : s.route || '기타항로').trim();
-
             visibleShips.push({ ...s, displayRoute: effectiveRoute, targetShip: targetShip });
         }
 
@@ -1448,9 +1281,7 @@ function render() {
         let uniqueVesselCount = new Set(visibleShips.map(s => s.code)).size;
         
         const statsEl = document.getElementById('stats');
-        if (statsEl) {
-            statsEl.innerText = `[ ${regularRoutes.size}개 항로 / 총 ${uniqueVesselCount}척 ]`;
-        }
+        if (statsEl) statsEl.innerText = `[ ${regularRoutes.size}개 항로 / 총 ${uniqueVesselCount}척 ]`;
 
         let groups = {};
         visibleShips.forEach(s => {
@@ -1483,19 +1314,9 @@ function render() {
                 if (isOriginalReserve && v.targetShip) {
                     let tName = (v.targetShip.rawName || '').split('(')[0].split('\n')[0].trim();
                     deployedBadge = `<span class="badge-deployed">⚡ [${tName} 대체운항 중]</span>`;
-
-                    let reserveLines = (v.rawName || '').split('\n').map(l => l.trim()).filter(Boolean);
-                    let reserveHeader = reserveLines[0] || '';
-
+                    let reserveHeader = (v.rawName || '').split('\n')[0] || '';
                     let targetLines = (v.targetShip.rawName || '').split('\n').map(l => l.trim()).filter(Boolean);
-                    let targetCriteria = targetLines.length > 1 ? targetLines[1] : '';
-                    let targetSpeedDist = targetLines.length > 2 ? targetLines[2] : '';
-
-                    let combinedLines = [reserveHeader];
-                    if (targetCriteria) combinedLines.push(targetCriteria);
-                    if (targetSpeedDist) combinedLines.push(targetSpeedDist);
-
-                    displayNameText = combinedLines.join('\n');
+                    displayNameText = [reserveHeader, targetLines[1] || '', targetLines[2] || ''].filter(Boolean).join('\n');
                 }
 
                 let vNameHTML = displayNameText.replace(/\n/g, '<br>').replace(/(통제기준:[^)]+\))/g, '<span class="highlight-red">$1</span>');
@@ -1503,18 +1324,14 @@ function render() {
                 let customRowsHtml = "";
                 if (v.customFields && v.customFields.length > 0) {
                     v.customFields.forEach(f => {
-                        if (f.key && f.val) {
-                            customRowsHtml += `<tr><td class="label" style="color:#0284C7;">${f.key}</td><td style="font-weight:600;">${f.val.replace(/\n/g, '<br>')}</td></tr>`;
-                        }
+                        if (f.key && f.val) customRowsHtml += `<tr><td class="label" style="color:#0284C7;">${f.key}</td><td style="font-weight:600;">${f.val.replace(/\n/g, '<br>')}</td></tr>`;
                     });
                 }
 
                 let ttButtonsHtml = "";
                 if (v.timetables && v.timetables.length > 0) {
                     v.timetables.forEach((tt, tIdx) => {
-                        if (tt.title && tt.imgData) {
-                            ttButtonsHtml += `<div class="btn-dynamic-tt" onclick="showImg('${tt.imgData}', '${tt.title}', { type: 'timetable', shipCode: '${v.code}', ttIndex: ${tIdx}, title: '${tt.title}' })">📅 ${tt.title}</div>`;
-                        }
+                        if (tt.title && tt.imgData) ttButtonsHtml += `<div class="btn-dynamic-tt" onclick="showImg('${tt.imgData}', '${tt.title}', { type: 'timetable', shipCode: '${v.code}', ttIndex: ${tIdx}, title: '${tt.title}' })">📅 ${tt.title}</div>`;
                     });
                 }
 
@@ -1571,9 +1388,7 @@ function render() {
         });
 
         const mainListEl = document.getElementById('mainList');
-        if (mainListEl) {
-            mainListEl.innerHTML = fullHtml;
-        }
+        if (mainListEl) mainListEl.innerHTML = fullHtml;
     } catch (e) {
         console.error("render() 예외 발생:", e);
     }
@@ -1587,27 +1402,14 @@ function renderRefSection() {
     for (let k in defaultRefItems) {
         let override = cloudRefItems[k] || {};
         if (!override.isDeleted) {
-            items.push({
-                id: k,
-                title: override.title || defaultRefItems[k].title,
-                imgData: override.imgData || null,
-                fallbackNames: defaultRefItems[k].fallbackNames,
-                order: defaultRefItems[k].order
-            });
+            items.push({ id: k, title: override.title || defaultRefItems[k].title, imgData: override.imgData || null, fallbackNames: defaultRefItems[k].fallbackNames, order: defaultRefItems[k].order });
         }
     }
     for (let k in cloudRefItems) {
         if (!defaultRefItems[k] && !cloudRefItems[k].isDeleted) {
-            items.push({
-                id: k,
-                title: cloudRefItems[k].title || '참고자료',
-                imgData: cloudRefItems[k].imgData || null,
-                fallbackNames: [],
-                order: cloudRefItems[k].order || 99
-            });
+            items.push({ id: k, title: cloudRefItems[k].title || '참고자료', imgData: cloudRefItems[k].imgData || null, fallbackNames: [], order: cloudRefItems[k].order || 99 });
         }
     }
-
     items.sort((a, b) => a.order - b.order);
 
     let html = "";
@@ -1636,10 +1438,7 @@ window.openRefImage = function(itemId, title) {
         def.fallbackNames.forEach(b => { exts.forEach(e => attempts.push(b + e)); });
         let idx = 0;
         function tryNext() {
-            if (idx >= attempts.length) {
-                alert("등록된 참고자료 이미지가 없습니다. [수정] 버튼을 눌러 이미지를 등록해 주세요.");
-                return;
-            }
+            if (idx >= attempts.length) { alert("등록된 이미지가 없습니다. [수정]을 통해 등록해 주세요."); return; }
             let path = attempts[idx++];
             let img = new Image();
             img.onload = () => showImg(path, title, null);
@@ -1648,7 +1447,7 @@ window.openRefImage = function(itemId, title) {
         }
         tryNext();
     } else {
-        alert("등록된 참고자료 이미지가 없습니다. [수정] 버튼을 눌러 이미지를 등록해 주세요.");
+        alert("등록된 이미지가 없습니다. [수정]을 통해 등록해 주세요.");
     }
 };
 
@@ -1691,21 +1490,13 @@ window.saveRefUpdate = async function() {
         let current = cloudRefItems[docId] || {};
         let file = document.getElementById('upload-ref-file').files[0];
         let imgData = current.imgData || null;
+        if (file) imgData = await processImageFile(file, 1600, 0.85);
 
-        if (file) {
-            imgData = await processImageFile(file, 1600, 0.85);
-        }
+        await db.collection("reference_materials").doc(docId).set({
+            title: title, imgData: imgData, isDeleted: false, order: current.order || (isNew ? Date.now() : 1), updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
 
-        const payload = {
-            title: title,
-            imgData: imgData,
-            isDeleted: false,
-            order: current.order || (isNew ? Date.now() : 1),
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        };
-
-        await db.collection("reference_materials").doc(docId).set(payload, { merge: true });
-        alert("참고자료가 성공적으로 저장되었습니다!");
+        alert("참고자료가 저장되었습니다!");
         closeRefModal();
     } catch (err) {
         alert("저장 실패: " + err.message);
@@ -1718,23 +1509,15 @@ window.saveRefUpdate = async function() {
 window.deleteRefItem = async function(id) {
     if (!confirm("해당 참고자료 항목을 삭제하시겠습니까?")) return;
     try {
-        await db.collection("reference_materials").doc(id).set({
-            isDeleted: true,
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        }, { merge: true });
+        await db.collection("reference_materials").doc(id).set({ isDeleted: true, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
         alert("삭제되었습니다.");
     } catch (err) {
         alert("삭제 실패: " + err.message);
     }
 };
 
-window.toggleRoute = function(listEl) {
-    listEl.style.display = (listEl.style.display === 'block') ? 'none' : 'block';
-};
-
-window.toggleRefGroup = function(listEl) {
-    listEl.style.display = (listEl.style.display === 'block') ? 'none' : 'block';
-};
+window.toggleRoute = function(listEl) { listEl.style.display = (listEl.style.display === 'block') ? 'none' : 'block'; };
+window.toggleRefGroup = function(listEl) { listEl.style.display = (listEl.style.display === 'block') ? 'none' : 'block'; };
 
 window.toggleVessel = function(headerEl, cleanName, uId, shipCode) {
     let detail = headerEl.nextElementSibling;
@@ -1752,10 +1535,7 @@ window.toggleVessel = function(headerEl, cleanName, uId, shipCode) {
         if (photoUrl) {
             imgEl.src = photoUrl;
             imgEl.style.display = 'block';
-            imgEl.onclick = (e) => { 
-                e.stopPropagation(); 
-                showImg(photoUrl, '선박 대표 사진', { type: 'photo', shipCode: shipCode, title: '대표 사진' }); 
-            };
+            imgEl.onclick = (e) => { e.stopPropagation(); showImg(photoUrl, '선박 대표 사진', { type: 'photo', shipCode: shipCode, title: '대표 사진' }); };
         } else {
             loadAutoImg([cleanName + '_사진', cleanName, cleanNoHo + '_사진', cleanNoHo], `auto-img-${uId}`, shipCode);
         }
@@ -1788,7 +1568,7 @@ const COMMON_EXTS = ['.png', '.jpg', '.jpeg', '.PNG', '.JPG', '.webp'];
 
 function smartBtnV2(baseNames, btnId, title, shipCode = null) {
     let el = document.getElementById(btnId);
-    if(!el) return;
+    if (!el) return;
     let attempts = [];
     baseNames.forEach(b => { COMMON_EXTS.forEach(e => attempts.push(b + e)); });
     let idx = 0;
@@ -1796,10 +1576,7 @@ function smartBtnV2(baseNames, btnId, title, shipCode = null) {
         if (idx >= attempts.length) return;
         let path = attempts[idx++];
         let img = new Image();
-        img.onload = () => { 
-            el.style.display = 'block'; 
-            el.onclick = () => showImg(path, title, shipCode ? { type: 'static_fallback', shipCode: shipCode, title: title } : null); 
-        };
+        img.onload = () => { el.style.display = 'block'; el.onclick = () => showImg(path, title, shipCode ? { type: 'static_fallback', shipCode: shipCode, title: title } : null); };
         img.onerror = tryNext;
         img.src = encodeURI(path);
     }
@@ -1832,8 +1609,7 @@ function smartGroupScan(btnGroup, baseText) {
         } else if (list.length > 1) {
             list.forEach((r, idx) => {
                 let b = document.getElementById(r.item.b);
-                let label = baseText + " " + (idx + 1);
-                b.innerText = label; b.style.display = 'block'; b.onclick = () => showImg(r.path, label, null);
+                b.innerText = baseText + " " + (idx + 1); b.style.display = 'block'; b.onclick = () => showImg(r.path, baseText + " " + (idx + 1), null);
             });
         }
     });
@@ -1841,7 +1617,7 @@ function smartGroupScan(btnGroup, baseText) {
 
 function loadAutoImg(baseNames, imgId, shipCode) {
     let el = document.getElementById(imgId);
-    if(!el) return;
+    if (!el) return;
     let attempts = [];
     baseNames.forEach(b => { COMMON_EXTS.forEach(e => attempts.push(b + e)); });
     let idx = 0;
@@ -1849,14 +1625,7 @@ function loadAutoImg(baseNames, imgId, shipCode) {
         if (idx >= attempts.length) return;
         let path = attempts[idx++];
         let img = new Image();
-        img.onload = () => { 
-            el.src = encodeURI(path); 
-            el.style.display = 'block'; 
-            el.onclick = (e) => { 
-                e.stopPropagation(); 
-                showImg(path, '선박 대표 사진', { type: 'photo', shipCode: shipCode, title: '대표 사진' }); 
-            }; 
-        };
+        img.onload = () => { el.src = encodeURI(path); el.style.display = 'block'; el.onclick = (e) => { e.stopPropagation(); showImg(path, '선박 대표 사진', { type: 'photo', shipCode: shipCode, title: '대표 사진' }); }; };
         img.onerror = tryNext;
         img.src = encodeURI(path);
     }
@@ -1879,10 +1648,7 @@ window.closeViewerModal = () => {
 window.handleDirectViewerDelete = async () => {
     if (!currentViewerContext) return;
     const ctx = currentViewerContext;
-
-    if (!confirm(`정말 '${ctx.title}' 사진을 즉시 삭제하시겠습니까?\n\n※ 확인 시 클라우드에서 바로 제거됩니다.`)) {
-        return;
-    }
+    if (!confirm(`정말 '${ctx.title}' 사진을 즉시 삭제하시겠습니까?\n\n※ 확인 시 클라우드에서 바로 제거됩니다.`)) return;
 
     try {
         if (ctx.type === 'timetable') {
@@ -1895,22 +1661,13 @@ window.handleDirectViewerDelete = async () => {
                 await docRef.set({ timetables: tts }, { merge: true });
             }
         } else if (ctx.type === 'photo') {
-            await db.collection("vessel_overrides").doc(ctx.shipCode).set({
-                photo: null,
-                images: { photo: null },
-                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-            }, { merge: true });
+            await db.collection("vessel_overrides").doc(ctx.shipCode).set({ photo: null, images: { photo: null }, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
         } else if (ctx.type === 'ref') {
-            await db.collection("reference_materials").doc(ctx.refId).set({
-                isDeleted: true,
-                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-            }, { merge: true });
+            await db.collection("reference_materials").doc(ctx.refId).set({ isDeleted: true, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
         } else {
-            alert("해당 이미지는 시스템 기본 파일(로컬 폴더 이미지)이거나 삭제 대상이 아닙니다.");
-            return;
+            alert("시스템 기본 이미지이거나 삭제 대상이 아닙니다."); return;
         }
-
-        alert("사진이 성공적으로 삭제되었습니다.");
+        alert("사진이 삭제되었습니다.");
         closeViewerModal();
     } catch (err) {
         alert("삭제 실패: " + err.message);
@@ -1920,11 +1677,11 @@ window.handleDirectViewerDelete = async () => {
 window.runSearch = () => {
     let q = document.getElementById('searchInput').value.toLowerCase().replace(/\s/g,'');
     Array.from(document.getElementsByClassName('vessel-card')).forEach(c => {
-        if(c.parentElement.parentNode.id === 'common-ref') return; 
+        if (c.parentElement.parentNode.id === 'common-ref') return;
         c.style.display = c.innerText.toLowerCase().replace(/\s/g,'').includes(q) ? 'block' : 'none';
     });
     Array.from(document.getElementsByClassName('route-group')).forEach(g => {
-        if(g.id === 'common-ref') { g.style.display = (q === "") ? 'block' : 'none'; return; }
+        if (g.id === 'common-ref') { g.style.display = (q === "") ? 'block' : 'none'; return; }
         let has = Array.from(g.getElementsByClassName('vessel-card')).some(c => c.style.display !== 'none');
         g.style.display = has ? 'block' : 'none';
         let list = g.querySelector('.vessel-list');
@@ -1964,11 +1721,7 @@ window.addCustomFieldRow = (key = '', val = '') => {
     const container = document.getElementById('custom-fields-container');
     const row = document.createElement('div');
     row.className = 'custom-field-row';
-    row.innerHTML = `
-        <input type="text" class="custom-field-key" placeholder="항목명 (예: 안전관리자)" value="${key}">
-        <input type="text" class="custom-field-val" placeholder="내용 입력" value="${val}">
-        <button type="button" class="btn-del-field" onclick="this.parentElement.remove()">🗑️</button>
-    `;
+    row.innerHTML = `<input type="text" class="custom-field-key" placeholder="항목명" value="${key}"><input type="text" class="custom-field-val" placeholder="내용" value="${val}"><button type="button" class="btn-del-field" onclick="this.parentElement.remove()">🗑️</button>`;
     container.appendChild(row);
 };
 
@@ -1977,18 +1730,9 @@ window.addTimetableRow = (title = '', existingImgData = null) => {
     const row = document.createElement('div');
     row.className = 'tt-row';
     row.dataset.existingImg = existingImgData || '';
-    
     row.innerHTML = `
-        <div class="tt-row-header">
-            <input type="text" class="tt-row-title" placeholder="시간표 명칭 (예: 월요일, 주말 등)" value="${title}">
-            <button type="button" class="btn-del-tt" onclick="this.closest('.tt-row').remove()">취소</button>
-        </div>
-        <div class="tt-file-area">
-            <input type="file" class="tt-file-input" accept="image/*">
-            <span class="tt-status-text" style="${existingImgData ? 'color:#10B981; font-weight:bold;' : 'color:#94A3B8;'}">
-                ${existingImgData ? '✅ 이미지 등록됨' : '⚠️ 이미지 선택 필요'}
-            </span>
-        </div>
+        <div class="tt-row-header"><input type="text" class="tt-row-title" placeholder="시간표 명칭" value="${title}"><button type="button" class="btn-del-tt" onclick="this.closest('.tt-row').remove()">취소</button></div>
+        <div class="tt-file-area"><input type="file" class="tt-file-input" accept="image/*"><span class="tt-status-text" style="${existingImgData ? 'color:#10B981; font-weight:bold;' : 'color:#94A3B8;'}">${existingImgData ? '✅ 이미지 등록됨' : '⚠️ 이미지 선택'}</span></div>
     `;
     container.appendChild(row);
 };
@@ -2000,8 +1744,7 @@ window.openEditModal = (shipCode) => {
     let currentData = cloudCustomData[shipCode] || {};
 
     document.getElementById('edit-vessel-key').value = shipCode;
-    document.getElementById('edit-vessel-title').innerText = `✏️ [${shipCode}] 정보 및 사진/시간표 수정`;
-
+    document.getElementById('edit-vessel-title').innerText = `✏️ [${shipCode}] 정보 및 시간표 수정`;
     document.getElementById('upload-ship-photo').value = '';
     document.getElementById('upload-status').style.display = 'none';
 
@@ -2024,20 +1767,14 @@ window.openEditModal = (shipCode) => {
     }
 
     document.getElementById('timetables-container').innerHTML = '';
-
     const customContainer = document.getElementById('custom-fields-container');
     customContainer.innerHTML = '';
     let fields = currentData.customFields || (custom && custom.customFields) || [];
-    fields.forEach(f => {
-        addCustomFieldRow(f.key, f.val);
-    });
-
+    fields.forEach(f => addCustomFieldRow(f.key, f.val));
     document.getElementById('edit-modal').style.display = 'flex';
 };
 
-window.closeEditModal = () => {
-    document.getElementById('edit-modal').style.display = 'none';
-};
+window.closeEditModal = () => { document.getElementById('edit-modal').style.display = 'none'; };
 
 window.saveVesselUpdate = async () => {
     const code = document.getElementById('edit-vessel-key').value;
@@ -2054,9 +1791,7 @@ window.saveVesselUpdate = async () => {
         let timetables = current.timetables || [];
 
         const photoFile = document.getElementById('upload-ship-photo').files[0];
-        if (photoFile) {
-            imagesMap.photo = await processImageFile(photoFile);
-        }
+        if (photoFile) imagesMap.photo = await processImageFile(photoFile);
 
         const ttRows = document.querySelectorAll('#timetables-container .tt-row');
         for (let row of ttRows) {
@@ -2069,16 +1804,13 @@ window.saveVesselUpdate = async () => {
         }
 
         let customFields = [];
-        const rows = document.querySelectorAll('#custom-fields-container .custom-field-row');
-        rows.forEach(r => {
+        document.querySelectorAll('#custom-fields-container .custom-field-row').forEach(r => {
             let k = r.querySelector('.custom-field-key').value.trim();
             let v = r.querySelector('.custom-field-val').value.trim();
-            if (k && v) {
-                customFields.push({ key: k, val: v });
-            }
+            if (k && v) customFields.push({ key: k, val: v });
         });
 
-        const payload = {
+        await db.collection("vessel_overrides").doc(code).set({
             rawName: document.getElementById('edit-raw-name').value,
             route: document.getElementById('edit-route').value,
             company: document.getElementById('edit-company').value,
@@ -2090,10 +1822,9 @@ window.saveVesselUpdate = async () => {
             timetables: timetables,
             images: imagesMap,
             updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        };
+        }, { merge: true });
 
-        await db.collection("vessel_overrides").doc(code).set(payload, { merge: true });
-        alert("선박 정보 및 시간표 설정이 성공적으로 저장되었습니다!");
+        alert("선박 정보가 저장되었습니다!");
         closeEditModal();
     } catch (err) {
         alert("저장 실패: " + err.message);
@@ -2117,19 +1848,13 @@ window.openAddShipModal = () => {
     document.getElementById('add-modal').style.display = 'flex';
 };
 
-window.closeAddModal = () => {
-    document.getElementById('add-modal').style.display = 'none';
-};
+window.closeAddModal = () => { document.getElementById('add-modal').style.display = 'none'; };
 
 window.saveNewShip = async () => {
     let code = document.getElementById('add-code').value.trim();
     let rawName = document.getElementById('add-raw-name').value.trim();
     let route = document.getElementById('add-route').value.trim();
-
-    if (!code || !rawName || !route) {
-        alert("선박코드, 선명, 항로는 필수 항목입니다.");
-        return;
-    }
+    if (!code || !rawName || !route) { alert("필수 항목을 모두 입력해 주세요."); return; }
 
     const btnSave = document.getElementById('btn-save-add');
     const statusEl = document.getElementById('add-upload-status');
@@ -2139,28 +1864,19 @@ window.saveNewShip = async () => {
     try {
         let imagesMap = {};
         const photoFile = document.getElementById('add-ship-photo').files[0];
-        if (photoFile) {
-            imagesMap.photo = await processImageFile(photoFile);
-        }
+        if (photoFile) imagesMap.photo = await processImageFile(photoFile);
 
-        const payload = {
-            isNewShip: true,
-            rawName: rawName,
-            route: route,
+        await db.collection("vessel_overrides").doc(code).set({
+            isNewShip: true, rawName: rawName, route: route,
             company: document.getElementById('add-company').value.trim(),
             ports: document.getElementById('add-ports').value.trim(),
             capacity: document.getElementById('add-capacity').value.trim(),
             decision: document.getElementById('add-decision').value.trim(),
             notes: document.getElementById('add-notes').value.trim(),
-            customFields: [],
-            timetables: [],
-            images: imagesMap,
-            isHidden: false,
-            isDeleted: false,
-            createdAt: firebase.firestore.FieldValue.serverTimestamp()
-        };
+            customFields: [], timetables: [], images: imagesMap,
+            isHidden: false, isDeleted: false, createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
 
-        await db.collection("vessel_overrides").doc(code).set(payload);
         alert(`신규 선박 [${rawName}]이(가) 등록되었습니다.`);
         closeAddModal();
     } catch (err) {
@@ -2172,38 +1888,19 @@ window.saveNewShip = async () => {
 };
 
 window.toggleHideShip = (shipCode, toHide) => {
-    let msg = toHide ? 
-        "해당 선박을 '선박 숨기기' 처리하시겠습니까?\n(기본 목록에서 숨겨지며, 상단 '숨김 선박 포함 보기'로 확인 가능합니다)" : 
-        "해당 선박의 숨김을 해제하고 정상 운항 목록에 표시하시겠습니까?";
-    
-    if (!confirm(msg)) return;
-
-    db.collection("vessel_overrides").doc(shipCode.trim()).set({
-        isHidden: toHide,
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-    }, { merge: true })
-    .then(() => alert(toHide ? "선박이 숨김 처리되었습니다." : "선박이 다시 노출됩니다."))
-    .catch(err => alert("처리 실패: " + err.message));
+    if (!confirm(toHide ? "선박을 숨기기 처리하시겠습니까?" : "숨김을 해제하시겠습니까?")) return;
+    db.collection("vessel_overrides").doc(shipCode.trim()).set({ isHidden: toHide, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true })
+        .then(() => alert(toHide ? "숨김 완료" : "노출 완료")).catch(err => alert(err.message));
 };
 
 window.deleteShip = (shipCode) => {
-    if (!confirm(`정말로 선박 [${shipCode}]을(를) 삭제(영구 제외)하시겠습니까?\n\n※ 삭제 시 목록에서 완전히 제거됩니다.`)) {
-        return;
-    }
-
+    if (!confirm(`정말로 선박 [${shipCode}]을(를) 삭제하시겠습니까?`)) return;
     shipCode = shipCode.trim();
     let isCustom = customAddedShips.some(s => String(s.id).trim() === shipCode);
     if (isCustom) {
-        db.collection("vessel_overrides").doc(shipCode).delete()
-            .then(() => alert("선박이 영구 삭제되었습니다."))
-            .catch(err => alert("삭제 실패: " + err.message));
+        db.collection("vessel_overrides").doc(shipCode).delete().then(() => alert("영구 삭제 완료"));
     } else {
-        db.collection("vessel_overrides").doc(shipCode).set({
-            isDeleted: true,
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        }, { merge: true })
-            .then(() => alert("선박이 목록에서 삭제되었습니다."))
-            .catch(err => alert("삭제 실패: " + err.message));
+        db.collection("vessel_overrides").doc(shipCode).set({ isDeleted: true, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true }).then(() => alert("삭제 완료"));
     }
 };
 
@@ -2227,26 +1924,19 @@ window.openDeployModal = (reserveCode) => {
         let ov = cloudCustomData[code] || {};
         let route = ov.route !== undefined ? ov.route : s[2];
         let name = (ov.rawName !== undefined ? ov.rawName : s[0]).split('(')[0].split('\n')[0].trim();
-        if (route.trim() !== '예비선') {
-            regularShips.push({ code: code, name: name, route: route, isHidden: !!ov.isHidden });
-        }
+        if (route.trim() !== '예비선') regularShips.push({ code: code, name: name, route: route, isHidden: !!ov.isHidden });
     });
 
     customAddedShips.forEach(s => {
-        if ((s.route || '').trim() !== '예비선') {
-            regularShips.push({ code: String(s.id).trim(), name: s.rawName.split('(')[0].trim(), route: s.route, isHidden: !!s.isHidden });
-        }
+        if ((s.route || '').trim() !== '예비선') regularShips.push({ code: String(s.id).trim(), name: s.rawName.split('(')[0].trim(), route: s.route, isHidden: !!s.isHidden });
     });
 
     regularShips.sort((a, b) => a.route.localeCompare(b.route, 'ko'));
-
     regularShips.forEach(rs => {
         let opt = document.createElement('option');
         opt.value = rs.code;
-        opt.innerText = `[${rs.route}] ${rs.name}${rs.isHidden ? ' (현재 숨김)' : ''}`;
-        if (override.deployedTarget && override.deployedTarget.trim() === rs.code) {
-            opt.selected = true;
-        }
+        opt.innerText = `[${rs.route}] ${rs.name}${rs.isHidden ? ' (숨김)' : ''}`;
+        if (override.deployedTarget && override.deployedTarget.trim() === rs.code) opt.selected = true;
         selectEl.appendChild(opt);
     });
 
@@ -2254,32 +1944,17 @@ window.openDeployModal = (reserveCode) => {
     document.getElementById('deploy-modal').style.display = 'flex';
 };
 
-window.closeDeployModal = () => {
-    document.getElementById('deploy-modal').style.display = 'none';
-};
-
-window.executeDeploySave = () => {
-    let targetCode = document.getElementById('deploy-target-select').value;
-    saveDeployStatus(targetCode);
-};
+window.closeDeployModal = () => { document.getElementById('deploy-modal').style.display = 'none'; };
+window.executeDeploySave = () => { saveDeployStatus(document.getElementById('deploy-target-select').value); };
 
 window.saveDeployStatus = async (targetCode) => {
     let reserveCode = document.getElementById('deploy-ship-code').value;
     if (!reserveCode) return;
-    reserveCode = reserveCode.trim();
-
     try {
-        await db.collection("vessel_overrides").doc(reserveCode).set({
-            deployedTarget: targetCode ? targetCode.trim() : null,
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        }, { merge: true });
-
+        await db.collection("vessel_overrides").doc(reserveCode.trim()).set({ deployedTarget: targetCode ? targetCode.trim() : null, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
         closeDeployModal();
-        let msg = targetCode ? "예비선이 해당 항로에 성공적으로 대체 투입되었습니다!" : "예비선 투입이 해제되어 대기 상태로 복귀했습니다.";
-        alert(msg);
-    } catch (err) {
-        alert("저장 실패: " + err.message);
-    }
+        alert(targetCode ? "대체 투입되었습니다." : "대체 투입이 해제되었습니다.");
+    } catch (err) { alert(err.message); }
 };
 
 window.filterBoard = (mode, btnEl) => {
@@ -2317,18 +1992,9 @@ window.openApiSettingModal = () => {
     document.getElementById('api-modal').style.display = 'flex';
 };
 
-window.closeApiSettingModal = () => {
-    document.getElementById('api-modal').style.display = 'none';
-};
-
-window.openRawWarnModal = () => {
-    document.getElementById('raw-warn-text-area').value = latestRawWarnText;
-    document.getElementById('raw-warn-modal').style.display = 'flex';
-};
-
-window.closeRawWarnModal = () => {
-    document.getElementById('raw-warn-modal').style.display = 'none';
-};
+window.closeApiSettingModal = () => { document.getElementById('api-modal').style.display = 'none'; };
+window.openRawWarnModal = () => { document.getElementById('raw-warn-text-area').value = latestRawWarnText; document.getElementById('raw-warn-modal').style.display = 'flex'; };
+window.closeRawWarnModal = () => { document.getElementById('raw-warn-modal').style.display = 'none'; };
 
 window.toggleManualWarning = (seaName, isChecked) => {
     activeSeaWarnings[seaName] = isChecked ? '풍랑주의보(발효중)' : null;
@@ -2341,10 +2007,7 @@ window.saveApiKeyModal = () => {
         let m = key.match(/authKey=([^&]+)/);
         if (m) key = m[1];
     }
-    if (!key) {
-        alert("기상청 인증키를 입력해주세요.");
-        return;
-    }
+    if (!key) { alert("기상청 인증키를 입력해주세요."); return; }
 
     let nmpntKey = document.getElementById('nmpnt-key-input').value.trim() || DEFAULT_NMPNT_KEY;
     let khoaInput = document.getElementById('khoa-key-input');
@@ -2353,19 +2016,16 @@ window.saveApiKeyModal = () => {
     localStorage.setItem("kma_apihub_authkey", key);
     localStorage.setItem("nmpnt_service_key", nmpntKey);
     localStorage.setItem("khoa_api_key", khoaKey);
-    alert(`✅ 설정 완료!\n기상청 키: ${key}\n측위원 키: ${nmpntKey}\n조사원 키: ${khoaKey}\n\n실시간 통신을 다시 시도합니다.`);
+    alert(`설정 완료! 기상청/측위원/조사원 키가 저장되었습니다.`);
     closeApiSettingModal();
     fetchWeatherRealtime();
 };
 
-// ==========================================
-// 8. 초기 렌더링 트리거
-// ==========================================
 document.addEventListener("DOMContentLoaded", () => {
     try {
         render();
         renderRefSection();
-    } catch(e) {
+    } catch (e) {
         console.error("초기 렌더링 예외:", e);
     }
 });
