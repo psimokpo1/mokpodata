@@ -1,18 +1,21 @@
-// api/khoa.js (국립해양조사원 바다누리 OceanGrid API 프록시)
+// api/khoa.js (국립해양조사원 바다누리 OceanGrid API 서버리스 프록시)
 export default async function handler(req, res) {
     const { 
         serviceKey = '47f38047094726017ef3dadeff2e4c2733c634c7878d7aa7f56a6a5b226c9eb3', 
         obsCode = 'DT_0016', // 기본값: 목포 조위관측소
-        type = 'tide'        // tide(조위관측소 실시간) 또는 buoy(해양관측부이)
+        type = 'tide'        // tide(실시간), history(과거 시간별 관측), buoy(부이)
     } = req.query;
 
-    // 국립해양조사원 OceanGrid 실시간 관측 API 엔드포인트
     let targetUrl = '';
+
     if (type === 'buoy') {
-        // 해양관측부이 실시간 자료
+        // 해양관측부이 실시간
         targetUrl = `http://www.khoa.go.kr/oceangrid/grid/api/buoyRecent/search.do?ServiceKey=${encodeURIComponent(serviceKey)}&ObsCode=${obsCode}&ResultType=json`;
+    } else if (type === 'history') {
+        // 조위관측소 과거 시간별(PreHour) 관측 이력 조회
+        targetUrl = `http://www.khoa.go.kr/oceangrid/grid/api/tideObsPreHour/search.do?ServiceKey=${encodeURIComponent(serviceKey)}&ObsCode=${obsCode}&ResultType=json`;
     } else {
-        // 조위관측소 실시간 관측자료 (조위, 풍속, 풍향, 수온, 기온 등)
+        // 조위관측소 최신 관측자료 (실시간 조위, 풍향, 풍속, 수온 등)
         targetUrl = `http://www.khoa.go.kr/oceangrid/grid/api/tideObsRecent/search.do?ServiceKey=${encodeURIComponent(serviceKey)}&ObsCode=${obsCode}&ResultType=json`;
     }
 
