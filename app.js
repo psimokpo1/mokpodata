@@ -24,7 +24,7 @@ let countdownIntervalId = null;
 let nextRefreshRemainingSec = 300;
 let latestRawWarnText = "기상청 특보 통보문을 수신 중입니다...";
 
-// 💡 사용자 정식 인증키 기본 바인딩
+// 기상청 정식 인증키, 측위정보원 키, 해양조사원 키
 const DEFAULT_KMA_AUTHKEY = "s0C3VEw6ScOAt1RMOinDFQ";
 const DEFAULT_NMPNT_KEY = "A8ECE1B4-0A1E-43E9-A5D4-7D4D906FC401";
 const DEFAULT_KHOA_KEY = "47f38047094726017ef3dadeff2e4c2733c634c7878d7aa7f56a6a5b226c9eb3";
@@ -37,6 +37,7 @@ function degToDirection(deg) {
 }
 
 let latestBuoyData = {
+    // [기상청 부이/등표/AWS]
     '신안':       { stnId: '22183',   type: 'buoy',   name: '신안 부이',       wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
     '추자도':     { stnId: '22184',   type: 'buoy',   name: '추자도 부이',     wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
     '칠발도':     { stnId: '22102',   type: 'buoy',   name: '칠발도 부이',     wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
@@ -45,12 +46,14 @@ let latestBuoyData = {
     '흑산도':     { stnId: '22193',   type: 'buoy',   name: '흑산도 부이',     wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
     '옥도':       { stnId: '308',     type: 'aws',    name: '옥도 AWS',        wind: '-', windDir: '-', sigWave: null, maxWave: null },
     '해수서파고': { stnId: '959',     type: 'beacon', name: '해수서 등표',     wind: '-', windDir: '-', sigWave: null, maxWave: null },
+    // [측위정보원 등대/터미널]
     '안좌':       { stnId: '1079001', type: 'nmpnt',  name: '안좌터미널(측위)', wind: '-', windDir: '-', sigWave: null, maxWave: null },
     '외달도':     { stnId: '1079008', type: 'nmpnt',  name: '외달도등표(측위)', wind: '-', windDir: '-', sigWave: null, maxWave: null },
     '가거도등대': { stnId: '1079003', type: 'nmpnt',  name: '가거도등대(측위)', wind: '-', windDir: '-', sigWave: null, maxWave: null },
     '홍도등대':   { stnId: '1079002', type: 'nmpnt',  name: '홍도등대(측위)',   wind: '-', windDir: '-', sigWave: null, maxWave: null },
     '하조도':     { stnId: '1079005', type: 'nmpnt',  name: '하조도등대(측위)', wind: '-', windDir: '-', sigWave: null, maxWave: null },
     '계마항':     { stnId: '1079007', type: 'nmpnt',  name: '계마항등대(측위)', wind: '-', windDir: '-', sigWave: null, maxWave: null },
+    // [국립해양조사원 실시간 관측소]
     '목포조위':   { obsCode: 'DT_0016', type: 'khoa', name: '목포조위(조사원)', wind: '-', windDir: '-', sigWave: null, maxWave: null, tide: '-' },
     '진도조위':   { obsCode: 'DT_0030', type: 'khoa', name: '진도조위(조사원)', wind: '-', windDir: '-', sigWave: null, maxWave: null, tide: '-' },
     '흑산조위':   { obsCode: 'DT_0029', type: 'khoa', name: '흑산조위(조사원)', wind: '-', windDir: '-', sigWave: null, maxWave: null, tide: '-' }
@@ -760,7 +763,7 @@ function parseWeatherWarnings(rawText) {
     }
 }
 
-async function fetchWithTimeout(url, options = {}, timeout = 3500) {
+async function fetchWithTimeout(url, options = {}, timeout = 4000) {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeout);
     try {
@@ -776,7 +779,7 @@ async function fetchWithTimeout(url, options = {}, timeout = 3500) {
 async function fetchKmaApi(type, authKey) {
     try {
         const url = `/api/kma?type=${type}&authKey=${encodeURIComponent(authKey)}&_t=${Date.now()}`;
-        const response = await fetchWithTimeout(url, {}, 3500);
+        const response = await fetchWithTimeout(url, {}, 5000);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         
         const buffer = await response.arrayBuffer();
@@ -784,17 +787,18 @@ async function fetchKmaApi(type, authKey) {
         try {
             const decoderEuc = new TextDecoder('euc-kr');
             text = decoderEuc.decode(buffer);
-            if (text.includes('')) throw new Error("깨짐");
         } catch (decErr) {
             const decoderUtf = new TextDecoder('utf-8');
             text = decoderUtf.decode(buffer);
         }
         
-        if (text.includes('"status"') && (text.includes('401') || text.includes('403') || text.includes('404'))) throw new Error(`기상청 거절: ${text}`);
-        if (text && !text.includes("API Fetch Error") && text.trim().length > 5) return text;
-        throw new Error("빈 응답 수신");
+        if (text && text.trim().length > 5 && !text.includes("API Fetch Error") && !text.includes("INVALID_")) {
+            return text;
+        }
+        throw new Error("유효하지 않은 응답");
     } catch (err) {
-        throw new Error(`[${type}] ${err.message}`);
+        console.warn(`[KMA ${type} 실패]:`, err.message);
+        return null;
     }
 }
 
@@ -807,14 +811,14 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         let nmpntKey = localStorage.getItem("nmpnt_service_key") || DEFAULT_NMPNT_KEY;
         let khoaKey = localStorage.getItem("khoa_api_key") || DEFAULT_KHOA_KEY;
 
-        // 💡 Promise.allSettled를 적용하여 특정 기관 API 오류가 다른 기관 수신을 막지 않도록 완전 격리
         const results = await Promise.allSettled([
             fetchKmaApi("buoy", authKey),
             fetchKmaApi("warn", authKey),
             fetchKmaApi("aws", authKey),
             fetchKmaApi("beacon", authKey),
-            fetchWithTimeout(`/api/nmpnt?serviceKey=${encodeURIComponent(nmpntKey)}&_t=${Date.now()}`, {}, 3500).then(r => r.json()),
-            fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=DT_0016&_t=${Date.now()}`, {}, 3500).then(r => r.json())
+            fetchWithTimeout(`/api/nmpnt?serviceKey=${encodeURIComponent(nmpntKey)}&_t=${Date.now()}`, {}, 4000).then(r => r.json()),
+            fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=DT_0016&_t=${Date.now()}`, {}, 4000).then(r => r.json()),
+            fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=DT_0030&_t=${Date.now()}`, {}, 4000).then(r => r.json())
         ]);
 
         const textBuoy = results[0].status === 'fulfilled' ? results[0].value : null;
@@ -823,11 +827,12 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         const textBeacon = results[3].status === 'fulfilled' ? results[3].value : null;
         const dataNmpnt = results[4].status === 'fulfilled' ? results[4].value : null;
         const dataKhoaMokpo = results[5].status === 'fulfilled' ? results[5].value : null;
+        const dataKhoaJindo = results[6].status === 'fulfilled' ? results[6].value : null;
 
         let updatedCount = 0;
 
         // 1. 기상청 부이
-        if (textBuoy && !textBuoy.includes('AUTH_ERROR') && !textBuoy.includes('"status"')) {
+        if (textBuoy) {
             const lines = textBuoy.split('\n');
             const targetBuoys = [
                 { id: '22183', key: '신안' },
@@ -856,14 +861,16 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                             latestBuoyData[tb.key].windDir = (!isNaN(rawWd) && rawWd >= 0) ? degToDirection(rawWd) : '북서풍';
                             updatedCount++;
                         }
-                        if (!isNaN(rawWh) && rawWh >= 0.0 && rawWh <= 12.0) latestBuoyData[tb.key].sigWave = rawWh.toFixed(1);
+                        if (!isNaN(rawWh) && rawWh >= 0.0 && rawWh <= 12.0) {
+                            latestBuoyData[tb.key].sigWave = rawWh.toFixed(1);
+                        }
                     }
                 });
             });
         }
 
         // 2. 기상청 AWS (옥도)
-        if (textAws && !textAws.includes('AUTH_ERROR') && !textAws.includes('"status"')) {
+        if (textAws) {
             const awsLines = textAws.split('\n');
             for (let line of awsLines) {
                 line = line.trim();
@@ -884,6 +891,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                             latestBuoyData['옥도'].wind = finalWs.toFixed(1);
                             latestBuoyData['옥도'].windDir = degToDirection(finalWd);
                             updatedCount++;
+                            break;
                         }
                     }
                 }
@@ -891,7 +899,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         }
 
         // 3. 기상청 등표 (해수서)
-        if (textBeacon && !textBeacon.includes('AUTH_ERROR') && !textBeacon.includes('"status"')) {
+        if (textBeacon) {
             const bLines = textBeacon.split('\n');
             for (let line of bLines) {
                 line = line.trim();
@@ -933,7 +941,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             });
         }
 
-        // 5. 국립해양조사원 관측치
+        // 5. 국립해양조사원 관측치 (목포, 진도)
         if (dataKhoaMokpo && dataKhoaMokpo.result && dataKhoaMokpo.result.data) {
             const kData = dataKhoaMokpo.result.data;
             const ws = parseFloat(kData.wind_speed);
@@ -944,6 +952,19 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                 latestBuoyData['목포조위'].wind = ws.toFixed(1);
                 latestBuoyData['목포조위'].windDir = (!isNaN(wd) && wd >= 0) ? degToDirection(wd) : '북서풍';
                 if (tideLevel !== undefined && tideLevel !== null) latestBuoyData['목포조위'].tide = tideLevel;
+                updatedCount++;
+            }
+        }
+        if (dataKhoaJindo && dataKhoaJindo.result && dataKhoaJindo.result.data) {
+            const kJData = dataKhoaJindo.result.data;
+            const ws = parseFloat(kJData.wind_speed);
+            const wd = parseFloat(kJData.wind_dir);
+            const tideLevel = kJData.tide_level;
+
+            if (!isNaN(ws) && ws >= 0) {
+                latestBuoyData['진도조위'].wind = ws.toFixed(1);
+                latestBuoyData['진도조위'].windDir = (!isNaN(wd) && wd >= 0) ? degToDirection(wd) : '북서풍';
+                if (tideLevel !== undefined && tideLevel !== null) latestBuoyData['진도조위'].tide = tideLevel;
                 updatedCount++;
             }
         }
@@ -961,7 +982,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
     } catch (err) {
         console.error("수신 전체 실패:", err);
         if (recvEl) recvEl.innerText = `⚠️ 통신 차단 또는 오류`;
-        if (!isAuto) alert(`🚨 기상 수신 실패: ${err.message}`);
         renderOperationBoard();
     }
 };
