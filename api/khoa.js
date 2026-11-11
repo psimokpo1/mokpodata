@@ -1,5 +1,11 @@
 // api/khoa.js
 export default async function handler(req, res) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
+    }
+
     const { 
         serviceKey = '47f38047094726017ef3dadeff2e4c2733c634c7878d7aa7f56a6a5b226c9eb3', 
         obsCode = 'DT_0016' 
@@ -16,12 +22,10 @@ export default async function handler(req, res) {
         });
 
         const data = await response.json();
-        res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
         return res.status(200).json(data);
     } catch (error) {
         console.error("KHOA API Proxy Error:", error);
-        res.setHeader('Access-Control-Allow-Origin', '*');
         return res.status(200).json({ result: { data: null }, error: error.message });
     }
 }
