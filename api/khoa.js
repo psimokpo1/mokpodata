@@ -1,4 +1,4 @@
-// api/khoa.js (국립해양조사원 해양관측부이 기상+파고 정식 엔드포인트 자동 연결)
+// api/khoa.js (공공데이터포털 국립해양조사원 twRecent & surveyWind type=json 규격 완결본)
 export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -11,70 +11,80 @@ export default async function handler(req, res) {
 
     const cleanKey = String(serviceKey).trim();
     const cleanObs = String(obsCode).trim();
-    const kstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
-    const todayStr = kstNow.toISOString().slice(0, 10).replace(/-/g, '');
 
-    // 바다누리 공식 API 후보 엔드포인트 (/api/oceangrid/ 경로)
-    const urls = [
-        `http://www.khoa.go.kr/api/oceangrid/tidalBuoy/search.do?ServiceKey=${cleanKey}&ObsCode=${cleanObs}&Date=${todayStr}&ResultType=json`,
-        `http://www.khoa.go.kr/api/oceangrid/obsWave/search.do?ServiceKey=${cleanKey}&ObsCode=${cleanObs}&Date=${todayStr}&ResultType=json`,
-        `http://www.khoa.go.kr/api/oceangrid/obsMeteor/search.do?ServiceKey=${cleanKey}&ObsCode=${cleanObs}&Date=${todayStr}&ResultType=json`,
-        `http://www.khoa.go.kr/api/oceangrid/buoyObsRecent/search.do?ServiceKey=${cleanKey}&ObsCode=${cleanObs}&ResultType=json`
-    ];
+    // 관측소 코드 접두어에 따라 엔드포인트 자동 분기 (DT_: 조위관측소 풍향/풍속, 그 외 KG_/IE_/TW_: 해양관측부이)
+    const isTideStation = cleanObs.startsWith('DT_');
+    const candidateUrls = isTideStation
+        ? [
+            `https://apis.data.go.kr/1192136/surveyWind/GetSurveyWindApiService?serviceKey=${cleanKey}&obsCode=${cleanObs}&type=json&numOfRows=10&pageNo=1`
+          ]
+        : [
+            `https://apis.data.go.kr/1192136/twRecent/GetTwRecentApiService?serviceKey=${cleanKey}&obsCode=${cleanObs}&type=json`,
+            `https://apis.data.go.kr/1192136/twRecent/getTwRecent?serviceKey=${cleanKey}&obsCode=${cleanObs}&type=json`
+          ];
 
-    const fetchJson = async (url) => {
+    let debugErrors = [];
+
+    for (const url of candidateUrls) {
         try {
             const response = await fetch(url, {
                 headers: { 'User-Agent': 'Mozilla/5.0' },
                 cache: 'no-store'
             });
             const text = await response.text();
-            if (text.trim().startsWith('{')) return JSON.parse(text);
-        } catch (e) {}
-        return null;
-    };
+            if (!text.trim().startsWith('{')) {
+                debugErrors.push(text.substring(0, 100));
+                continue;
+            }
 
-    const results = await Promise.all(urls.map(u => fetchJson(u)));
+            const json = JSON.parse(text);
 
-    let merged = {
-        wind_speed: null,
-        wind_dir: null,
-        sig_wave: null,
-        max_wave: null,
-        record_time: null
-    };
+            if (json.OpenAPI_ServiceResponse) {
+                debugErrors.push(json.OpenAPI_ServiceResponse.cmmMsgHeader?.returnAuthMsg || 'API_ERR');
+                continue;
+            }
 
-    results.forEach(json => {
-        if (!json || !json.result || !json.result.data) return;
-        const dList = Array.isArray(json.result.data) ? json.result.data : [json.result.data];
-        if (dList.length === 0) return;
+            let item = null;
+            if (json.response?.body?.items?.item) {
+                const rawItem = json.response.body.items.item;
+                item = Array.isArray(rawItem) ? rawItem[rawItem.length - 1] : rawItem;
+            } else if (json.body?.items?.item) {
+                const rawItem = json.body.items.item;
+                item = Array.isArray(rawItem) ? rawItem[rawItem.length - 1] : rawItem;
+            } else if (json.result?.data) {
+                const rawData = json.result.data;
+                item = Array.isArray(rawData) ? rawData[rawData.length - 1] : rawData;
+            }
 
-        // 가장 최신 레코드(배열의 마지막 요소) 추출
-        const latest = dList[dList.length - 1];
-        if (!latest) return;
+            if (item) {
+                const ws = item.windSpeed ?? item.wind_speed ?? item.wspd ?? item.ws ?? null;
+                const wd = item.windDir ?? item.wind_dir ?? item.wdir ?? item.wd ?? null;
+                const sigW = item.waveHeight ?? item.waveHgt ?? item.wave_hgt ?? item.sigWaveHgt ?? item.swh ?? null;
+                const maxW = item.maxWaveHeight ?? item.maxWaveHgt ?? item.max_wave_hgt ?? item.mwh ?? null;
+                const recTime = item.obsTime ?? item.record_time ?? item.tm ?? null;
 
-        if (latest.wind_speed !== undefined && latest.wind_speed !== null && latest.wind_speed !== '') {
-            merged.wind_speed = latest.wind_speed;
+                res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+                return res.status(200).json({
+                    result: {
+                        data: {
+                            wind_speed: ws,
+                            wind_dir: wd,
+                            sig_wave: sigW,
+                            max_wave: maxW,
+                            record_time: recTime
+                        }
+                    },
+                    rawItem: item
+                });
+            }
+        } catch (e) {
+            debugErrors.push(e.message);
         }
-        if (latest.wind_dir !== undefined && latest.wind_dir !== null && latest.wind_dir !== '') {
-            merged.wind_dir = latest.wind_dir;
-        }
-        const sigVal = latest.wave_hgt ?? latest.wave_height ?? latest.sig_wave_hgt;
-        if (sigVal !== undefined && sigVal !== null && sigVal !== '') {
-            merged.sig_wave = sigVal;
-        }
-        const maxVal = latest.max_wave_hgt ?? latest.max_wave_height;
-        if (maxVal !== undefined && maxVal !== null && maxVal !== '') {
-            merged.max_wave = maxVal;
-        }
-        if (latest.record_time) {
-            merged.record_time = latest.record_time;
-        }
-    });
+    }
 
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
     return res.status(200).json({
-        result: { data: merged },
-        rawResponses: results.filter(Boolean).map(r => r.result?.error || 'OK')
+        result: { data: null },
+        error: "KHOA_FETCH_FAILED",
+        debugErrors
     });
 }
