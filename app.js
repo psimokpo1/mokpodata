@@ -83,7 +83,7 @@ const defaultRefItems = {
 };
 
 // ==========================================
-// 2. 인증 및 실시간 동기화 (완전 복구)
+// 2. 인증 및 실시간 동기화
 // ==========================================
 auth.onAuthStateChanged(user => {
     const overlay = document.getElementById("login-overlay");
@@ -353,7 +353,7 @@ function parseVesselControlCriteria(rawName, decision, route, notes) {
 }
 
 // ==========================================
-// 4. 상황판 및 관측소 과거 이력 타임테이블 모달
+// 4. 상황판 및 최근 6시간 과거 이력 타임테이블 모달
 // ==========================================
 window.toggleMeteoDetailRow = function(shipCode) {
     const detailRow = document.getElementById(`meteo-detail-${shipCode}`);
@@ -364,10 +364,27 @@ window.toggleMeteoDetailRow = function(shipCode) {
     if (icon) icon.innerText = isShowing ? '▼' : '▲';
 };
 
+function isWithinLast6Hours(sortKey) {
+    if (!sortKey || sortKey.length < 12) return true;
+    const digits = sortKey.replace(/\D/g, '');
+    if (digits.length < 12) return true;
+    const y = parseInt(digits.substring(0, 4), 10);
+    const m = parseInt(digits.substring(4, 6), 10) - 1;
+    const d = parseInt(digits.substring(6, 8), 10);
+    const h = parseInt(digits.substring(8, 10), 10);
+    const min = parseInt(digits.substring(10, 12), 10);
+    const itemUtcMs = Date.UTC(y, m, d, h - 9, min, 0);
+    const diffMs = Date.now() - itemUtcMs;
+    return diffMs >= -10 * 60 * 1000 && diffMs <= 6 * 60 * 60 * 1000 + 10 * 60 * 1000;
+}
+
 window.openWeatherHistoryModal = function(stKey) {
     const stData = latestBuoyData[stKey];
     const stName = stData ? (stData.name || stKey) : stKey;
-    let historyArr = stationHistoryMap[stKey] || [];
+    let rawHistory = stationHistoryMap[stKey] || [];
+
+    // 최근 6시간 이내 기록만 필터링
+    let historyArr = rawHistory.filter(h => isWithinLast6Hours(h.sortKey));
 
     let modalEl = document.getElementById('weather-history-modal');
     if (!modalEl) {
@@ -381,7 +398,7 @@ window.openWeatherHistoryModal = function(stKey) {
 
     let rowsHtml = '';
     if (historyArr.length === 0) {
-        rowsHtml = `<tr><td colspan="${isWindOnly ? 4 : 6}" style="text-align:center; padding:24px; color:#94A3B8;">수집된 시간대별 과거 이력 데이터가 없습니다. (실시간 갱신 시 자동 누적됩니다)</td></tr>`;
+        rowsHtml = `<tr><td colspan="${isWindOnly ? 4 : 6}" style="text-align:center; padding:24px; color:#94A3B8;">최근 6시간 이내 수집된 관측 이력이 없습니다.</td></tr>`;
     } else {
         let sortedList = [...historyArr].sort((a, b) => (b.sortKey || b.time || '').localeCompare(a.sortKey || a.time || ''));
         sortedList.forEach(h => {
@@ -421,7 +438,7 @@ window.openWeatherHistoryModal = function(stKey) {
     modalEl.innerHTML = `
         <div style="background:#fff; width:660px; max-width:95vw; max-height:85vh; border-radius:12px; box-shadow:0 10px 25px rgba(0,0,0,0.25); display:flex; flex-direction:column; overflow:hidden;">
             <div style="padding:15px 20px; background:#1E293B; color:#fff; display:flex; justify-content:space-between; align-items:center;">
-                <h3 style="margin:0; font-size:15.5px;">📈 [${stName}] 시간대별 기상 관측 과거 이력</h3>
+                <h3 style="margin:0; font-size:15.5px;">📈 [${stName}] 최근 6시간 기상 관측 이력</h3>
                 <button onclick="document.getElementById('weather-history-modal').style.display='none'" style="background:none; border:none; color:#fff; font-size:18px; cursor:pointer; font-weight:bold;">✕</button>
             </div>
             <div style="padding:18px; overflow-y:auto; flex:1;">
@@ -476,7 +493,7 @@ function buildMeteoSubTableHtml(parsed, shipName, routeName) {
         rowsHtml += `
             <tr>
                 <td>${agencyBadge}</td>
-                <td><strong style="cursor:pointer; color:#0284C7; text-decoration:underline;" onclick="openWeatherHistoryModal('${stKey}')" title="클릭 시 '${stData.name || stKey}' 과거 이력 조회">${stData.name || stKey}</strong></td>
+                <td><strong style="cursor:pointer; color:#0284C7; text-decoration:underline;" onclick="openWeatherHistoryModal('${stKey}')" title="클릭 시 '${stData.name || stKey}' 최근 6시간 이력 조회">${stData.name || stKey}</strong></td>
                 <td style="${windStyle}">${windDisplay}</td>
                 <td>${waveStr}</td>
                 <td><span style="color:#059669; font-weight:bold;">실시간 연동</span></td>
@@ -487,7 +504,7 @@ function buildMeteoSubTableHtml(parsed, shipName, routeName) {
     return `
         <div class="meteo-detail-container">
             <div class="meteo-detail-header">
-                <span>📊 [${routeName}] ${shipName} — 연계 관측소 실시간 관측 상세 테이블 (관측소명 클릭 시 과거 이력 조회)</span>
+                <span>📊 [${routeName}] ${shipName} — 연계 관측소 실시간 관측 상세 테이블 (관측소명 클릭 시 최근 6시간 이력 조회)</span>
                 <span style="font-size:11.5px; color:#64748B; font-weight:normal;">선박 통제기준: 풍속 ${wLimit}m/s ${parsed.sigWaveLimit ? '/ 유의파고 ' + parsed.sigWaveLimit + 'm' : ''}</span>
             </div>
             <table class="meteo-sub-table">
@@ -704,12 +721,12 @@ function renderOperationBoard() {
                         if (parsed.maxWaveLimit && hasRealMax && maxVal >= parsed.maxWaveLimit) isAnyWaveDanger = true;
                     }
 
-                    let windText = hasRealWind ? `${windVal.toFixed(1)}m/s (${stData.windDir || '북서풍'})` : `<span style="color:#94A3B8;">수신대기</span>`;
+                    let windText = hasRealWind ? `${windVal.toFixed(1)}m/s (${stData.windDir || '-'})` : `<span style="color:#94A3B8;">수신대기</span>`;
                     let waveText = `<span style="color:#94A3B8;">수신대기</span>`;
                     if (hasRealSig && hasRealMax) waveText = `유의 ${sigVal.toFixed(1)}m (최대 ${maxVal.toFixed(1)}m)`;
                     else if (hasRealSig) waveText = `유의 ${sigVal.toFixed(1)}m`;
 
-                    let clickableTitle = `<span style="cursor:pointer; color:#0284C7; text-decoration:underline;" onclick="event.stopPropagation(); openWeatherHistoryModal('${stKey}')" title="클릭 시 '${stTitle}' 과거 이력 조회">${stTitle}</span>`;
+                    let clickableTitle = `<span style="cursor:pointer; color:#0284C7; text-decoration:underline;" onclick="event.stopPropagation(); openWeatherHistoryModal('${stKey}')" title="클릭 시 '${stTitle}' 최근 6시간 이력 조회">${stTitle}</span>`;
 
                     if (isKhoa) {
                         stationPoints.push(`🌊 ${clickableTitle}`);
@@ -830,7 +847,7 @@ function renderOperationBoard() {
 }
 
 // ==========================================
-// 5. 기상특보 파싱 및 통신 엔진 (옥도 AWS & 과거 로그 수집)
+// 5. 기상특보 파싱 및 통신 엔진 (0.0 덮어쓰기 차단 + 6시간 이력 수집)
 // ==========================================
 function setSeaWarningByLatestFc(seaKey, alertType, fcTimeNum) {
     let prevFc = seaWarningTimestamps[seaKey] || 0;
@@ -926,7 +943,7 @@ function parseWeatherWarnings(rawText) {
     }
 }
 
-async function fetchWithTimeout(url, options = {}, timeout = 5000) {
+async function fetchWithTimeout(url, options = {}, timeout = 5500) {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeout);
     try {
@@ -942,7 +959,7 @@ async function fetchWithTimeout(url, options = {}, timeout = 5000) {
 async function fetchKmaApi(type, authKey) {
     try {
         const url = `/api/kma?type=${type}&authKey=${encodeURIComponent(authKey)}&_t=${Date.now()}`;
-        const response = await fetchWithTimeout(url, {}, 5000);
+        const response = await fetchWithTimeout(url, {}, 5500);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         
         const buffer = await response.arrayBuffer();
@@ -998,18 +1015,20 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
 
         let updatedCount = 0;
 
-        // 1. 기상청 부이 및 등표(해수서) 파싱 (기존 검증된 쉼표/공백 겸용 고정 컬럼 파싱)
+        // 1. 기상청 부이 및 등표(해수서) 파싱
         if (textBuoy) {
             const lines = textBuoy.split('\n');
             const targetBuoys = [
-                { id: '22183', name: '신안',   key: '신안' },
-                { id: '22184', name: '추자도', key: '추자도' },
-                { id: '22102', name: '칠발도', key: '칠발도' },
-                { id: '22298', name: '홍도',   key: '홍도' },
-                { id: '22297', name: '가거도', key: '가거도' },
-                { id: '22193', name: '흑산도', key: '흑산도' },
-                { id: '959',   name: '해수서', key: '해수서파고' }
+                { id: '22183', key: '신안' },
+                { id: '22184', key: '추자도' },
+                { id: '22102', key: '칠발도' },
+                { id: '22298', key: '홍도' },
+                { id: '22297', key: '가거도' },
+                { id: '22193', key: '흑산도' },
+                { id: '959',   key: '해수서파고' }
             ];
+
+            let latestTsByKey = {};
 
             lines.forEach(line => {
                 line = line.trim();
@@ -1020,46 +1039,57 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                 const tmStr = cols[1] || '';
                 const timeOnly = tmStr.length >= 12 ? `${tmStr.substring(8,10)}:${tmStr.substring(10,12)}` : '최신';
                 const stnId = cols[2];
-                const stnName = cols[3] || '';
 
                 targetBuoys.forEach(tb => {
-                    if (stnId === tb.id || (tb.name && stnName.includes(tb.name))) {
+                    if (stnId === tb.id) {
                         let rawWh = parseFloat(cols[6]);
                         let rawWd = parseFloat(cols[7]);
                         let rawWs = parseFloat(cols[8]);
+                        let rawMaxWh = cols.length >= 10 ? parseFloat(cols[9]) : NaN;
 
-                        let wVal = (!isNaN(rawWs) && rawWs >= 0 && rawWs < 50.0) ? rawWs.toFixed(1) : '-';
-                        let dVal = (!isNaN(rawWd) && rawWd >= 0 && rawWd <= 360) ? degToDirection(rawWd) : '-';
+                        let isInvalidZeroWind = (rawWs === 0 && rawWd === 0);
+
+                        let wVal = (!isInvalidZeroWind && !isNaN(rawWs) && rawWs >= 0 && rawWs < 50.0) ? rawWs.toFixed(1) : '-';
+                        let dVal = (!isInvalidZeroWind && !isNaN(rawWd) && rawWd >= 0 && rawWd <= 360) ? degToDirection(rawWd) : '-';
                         let whVal = (!isNaN(rawWh) && rawWh >= 0.0 && rawWh <= 12.0) ? rawWh.toFixed(1) : '-';
+                        let maxWhVal = (!isNaN(rawMaxWh) && rawMaxWh >= 0.0 && rawMaxWh <= 20.0) ? rawMaxWh.toFixed(1) : '-';
 
                         if (wVal !== '-' || whVal !== '-') {
                             if (!stationHistoryMap[tb.key]) stationHistoryMap[tb.key] = [];
-                            let idx = stationHistoryMap[tb.key].findIndex(h => h.sortKey === tmStr && h.time === timeOnly);
-                            let entry = { sortKey: tmStr, time: timeOnly, wind: wVal, windDir: dVal, sigWave: whVal, maxWave: '-' };
+                            let idx = stationHistoryMap[tb.key].findIndex(h => h.sortKey === tmStr);
+                            let entry = { sortKey: tmStr, time: timeOnly, wind: wVal, windDir: dVal, sigWave: whVal, maxWave: maxWhVal };
                             if (idx >= 0) stationHistoryMap[tb.key][idx] = entry;
                             else stationHistoryMap[tb.key].push(entry);
                         }
 
-                        if (wVal !== '-') {
-                            latestBuoyData[tb.key].wind = wVal;
-                            latestBuoyData[tb.key].windDir = dVal !== '-' ? dVal : '북서풍';
-                            updatedCount++;
-                        }
-                        if (whVal !== '-') {
-                            latestBuoyData[tb.key].sigWave = whVal;
-                            if (tb.key === '해수서파고' && isNaN(rawWs)) updatedCount++;
+                        if (!latestTsByKey[tb.key] || tmStr >= latestTsByKey[tb.key]) {
+                            latestTsByKey[tb.key] = tmStr;
+                            if (wVal !== '-') {
+                                latestBuoyData[tb.key].wind = wVal;
+                                latestBuoyData[tb.key].windDir = dVal;
+                                updatedCount++;
+                            }
+                            if (whVal !== '-') {
+                                latestBuoyData[tb.key].sigWave = whVal;
+                                if (tb.key === '해수서파고' && wVal === '-') updatedCount++;
+                            }
+                            if (maxWhVal !== '-') {
+                                latestBuoyData[tb.key].maxWave = maxWhVal;
+                            }
                         }
                     }
                 });
             });
         }
 
-        // 2. 기상청 AWS (옥도 308) - 고정 컬럼 인덱스(cols[1] === '308') 완벽 복구
+        // 2. 기상청 AWS (옥도 308)
         if (textAws) {
             const awsLines = textAws.split('\n');
-            for (let line of awsLines) {
+            let latestAwsTs = '';
+
+            awsLines.forEach(line => {
                 line = line.trim();
-                if (!line || line.startsWith('#')) continue;
+                if (!line || line.startsWith('#')) return;
                 const cols = line.split(/[\s,]+/).filter(Boolean);
                 if (cols.length >= 4 && cols[1] === '308') {
                     const tmStr = cols[0] || '';
@@ -1072,28 +1102,36 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                     const finalWs = (!isNaN(ws10) && ws10 >= 0 && ws10 < 100) ? ws10 : ws1;
                     const finalWd = (!isNaN(wd10) && wd10 >= 0 && wd10 <= 360) ? wd10 : wd1;
 
-                    if (!isNaN(finalWs) && finalWs >= 0 && finalWs < 100) {
+                    let isInvalidZero = (finalWs === 0 && finalWd === 0);
+
+                    if (!isInvalidZero && !isNaN(finalWs) && finalWs >= 0 && finalWs < 100) {
                         const wStr = finalWs.toFixed(1);
-                        const dStr = (!isNaN(finalWd) && finalWd >= 0 && finalWd <= 360) ? degToDirection(finalWd) : '북서풍';
+                        const dStr = (!isNaN(finalWd) && finalWd >= 0 && finalWd <= 360) ? degToDirection(finalWd) : '-';
 
                         if (!stationHistoryMap['옥도']) stationHistoryMap['옥도'] = [];
-                        let idx = stationHistoryMap['옥도'].findIndex(h => h.sortKey === tmStr && h.time === timeOnly);
+                        let idx = stationHistoryMap['옥도'].findIndex(h => h.sortKey === tmStr);
                         let entry = { sortKey: tmStr, time: timeOnly, wind: wStr, windDir: dStr, sigWave: null, maxWave: null };
                         if (idx >= 0) stationHistoryMap['옥도'][idx] = entry;
                         else stationHistoryMap['옥도'].push(entry);
 
-                        latestBuoyData['옥도'].wind = wStr;
-                        latestBuoyData['옥도'].windDir = dStr;
-                        updatedCount++;
+                        if (!latestAwsTs || tmStr >= latestAwsTs) {
+                            latestAwsTs = tmStr;
+                            latestBuoyData['옥도'].wind = wStr;
+                            latestBuoyData['옥도'].windDir = dStr;
+                            updatedCount++;
+                        }
                     }
                 }
-            }
+            });
         }
 
         // 3. 측위정보원 등대
         if (dataNmpnt && dataNmpnt.result && dataNmpnt.result.recordset) {
             const records = dataNmpnt.result.recordset;
-            const nowTime = new Date().toTimeString().slice(0, 5);
+            const kstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+            const nowSortKey = kstNow.toISOString().replace(/\D/g, '').substring(0, 12);
+            const nowTime = `${nowSortKey.substring(8,10)}:${nowSortKey.substring(10,12)}`;
+
             records.forEach(item => {
                 const code = String(item.MMSI_CODE || '').trim();
                 const name = String(item.MMSI_NM || '').trim();
@@ -1101,9 +1139,12 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                 const wd = parseFloat(item.WIND_DIRECT);
                 let tmStr = String(item.RECORD_TIME || item.TIME || item.REG_DATE || '');
                 let timeOnly = tmStr.length >= 16 ? tmStr.substring(11, 16) : (tmStr.includes(' ') ? tmStr.split(' ')[1].substring(0,5) : nowTime);
+                let sortKey = tmStr.replace(/\D/g, '').length >= 12 ? tmStr.replace(/\D/g, '').substring(0, 12) : nowSortKey;
+
+                if (ws === 0 && wd === 0) return;
 
                 if (!isNaN(ws) && ws >= 0 && ws < 60) {
-                    const dirStr = (!isNaN(wd) && wd >= 0) ? degToDirection(wd) : '북서풍';
+                    const dirStr = (!isNaN(wd) && wd >= 0 && wd <= 360) ? degToDirection(wd) : '-';
                     const formattedWs = ws.toFixed(1);
 
                     let targetKey = null;
@@ -1117,7 +1158,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                     if (targetKey && latestBuoyData[targetKey]) {
                         if (!stationHistoryMap[targetKey]) stationHistoryMap[targetKey] = [];
                         let idx = stationHistoryMap[targetKey].findIndex(h => h.time === timeOnly);
-                        let entry = { sortKey: timeOnly, time: timeOnly, wind: formattedWs, windDir: dirStr, sigWave: null, maxWave: null };
+                        let entry = { sortKey: sortKey, time: timeOnly, wind: formattedWs, windDir: dirStr, sigWave: null, maxWave: null };
                         if (idx >= 0) stationHistoryMap[targetKey][idx] = entry;
                         else stationHistoryMap[targetKey].push(entry);
 
@@ -1143,7 +1184,9 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                     const sigW = parseFloat(item.waveHeight ?? item.waveHgt ?? item.wave_hgt ?? item.sigWaveHgt ?? item.swh ?? item.wh);
                     const maxW = parseFloat(item.maxWaveHeight ?? item.maxWaveHgt ?? item.max_wave_hgt ?? item.mwh);
                     let tmStr = String(item.obsTime ?? item.record_time ?? item.tm ?? item.obsDt ?? '');
-                    let timeOnly = tmStr.length >= 16 ? tmStr.substring(11, 16) : (tmStr.includes(' ') ? tmStr.split(' ')[1].substring(0,5) : '최신');
+                    let digits = tmStr.replace(/\D/g, '');
+                    let sortKey = digits.length >= 12 ? digits.substring(0, 12) : tmStr;
+                    let timeOnly = tmStr.length >= 16 ? tmStr.substring(11, 16) : (digits.length >= 12 ? `${digits.substring(8,10)}:${digits.substring(10,12)}` : '최신');
 
                     let wStr = (!isNaN(ws) && ws >= 0 && ws < 80) ? ws.toFixed(1) : '-';
                     let dStr = (!isNaN(wd) && wd >= 0 && wd <= 360) ? degToDirection(wd) : '-';
@@ -1151,8 +1194,8 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                     let mWave = (!isNaN(maxW) && maxW >= 0 && maxW <= 30) ? maxW.toFixed(1) : '-';
 
                     if (wStr !== '-' || sWave !== '-') {
-                        let idx = stationHistoryMap[targetKey].findIndex(h => h.sortKey === tmStr && h.time === timeOnly);
-                        let entry = { sortKey: tmStr, time: timeOnly, wind: wStr, windDir: dStr, sigWave: sWave, maxWave: mWave };
+                        let idx = stationHistoryMap[targetKey].findIndex(h => h.sortKey === sortKey && h.time === timeOnly);
+                        let entry = { sortKey: sortKey, time: timeOnly, wind: wStr, windDir: dStr, sigWave: sWave, maxWave: mWave };
                         if (idx >= 0) stationHistoryMap[targetKey][idx] = entry;
                         else stationHistoryMap[targetKey].push(entry);
                     }
@@ -1163,7 +1206,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             const wd = parseFloat(kData.wind_dir);
             if (!isNaN(ws) && ws >= 0 && ws < 80) {
                 latestBuoyData[targetKey].wind = ws.toFixed(1);
-                latestBuoyData[targetKey].windDir = (!isNaN(wd) && wd >= 0) ? degToDirection(wd) : '북서풍';
+                latestBuoyData[targetKey].windDir = (!isNaN(wd) && wd >= 0) ? degToDirection(wd) : '-';
                 hasAnyData = true;
             }
 
