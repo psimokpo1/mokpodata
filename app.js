@@ -75,7 +75,7 @@ const defaultRefItems = {
 };
 
 // ==========================================
-// 2. 인증 및 실시간 동기화 (전역 window 바인딩 보장)
+// 2. 인증 및 실시간 동기화
 // ==========================================
 auth.onAuthStateChanged(user => {
     const overlay = document.getElementById("login-overlay");
@@ -174,13 +174,13 @@ function initRealtimeSync() {
         if (boardSec && boardSec.style.display === 'block') {
             try { renderOperationBoard(); } catch(e){}
         }
-    }, err => console.warn("vessel_overrides 권한/동기화 안내:", err.message));
+    }, err => console.warn("vessel_overrides 동기화 안내:", err.message));
 
     db.collection("reference_materials").onSnapshot(snapshot => {
         cloudRefItems = {};
         snapshot.forEach(doc => { cloudRefItems[doc.id] = doc.data(); });
         renderRefSection();
-    }, err => console.warn("reference_materials 권한/동기화 안내:", err.message));
+    }, err => console.warn("reference_materials 동기화 안내:", err.message));
 }
 
 // ==========================================
