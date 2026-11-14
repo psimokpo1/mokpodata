@@ -1,4 +1,4 @@
-// api/kma.js (기상청 부이/AWS 최근 6시간 이력 조회 + 특보 중계)
+// api/kma.js (기상청 APIHub 최근 6시간 이력 tm1~tm2 조회 및 중계)
 export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -7,33 +7,23 @@ export default async function handler(req, res) {
     const { type = 'buoy', authKey = 's0C3VEw6ScOAt1RMOinDFQ' } = req.query;
     const cleanKey = String(authKey).trim();
 
-    // KST 기준 현재 시각(tm2) 및 6시간 전 시각(tm1) 계산 (YYYYMMDDHHMI)
+    // KST 기준 현재(tm2) 및 6시간 전(tm1) 시각 생성 (YYYYMMDDHHMI)
     const nowKst = new Date(Date.now() + 9 * 60 * 60 * 1000);
-    const sixHoursAgoKst = new Date(nowKst.getTime() - 6 * 60 * 60 * 1000);
+    const past6hKst = new Date(nowKst.getTime() - 6 * 60 * 60 * 1000);
 
-    const formatKmaTime = (d) => {
-        const yyyy = d.getUTCFullYear();
-        const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
-        const dd = String(d.getUTCDate()).padStart(2, '0');
-        const hh = String(d.getUTCHours()).padStart(2, '0');
-        const min = String(Math.floor(d.getUTCMinutes() / 10) * 10).padStart(2, '0');
-        return `${yyyy}${mm}${dd}${hh}${min}`;
-    };
-
-    const tm2 = formatKmaTime(nowKst);
-    const tm1 = formatKmaTime(sixHoursAgoKst);
+    const fmt = (d) => d.toISOString().replace(/\D/g, '').substring(0, 12);
+    const tm2 = fmt(nowKst);
+    const tm1 = fmt(past6hKst);
 
     let targetUrl = '';
     if (type === 'buoy') {
-        // 해양기상관측(부이/등표) 최근 6시간 구간 요청
+        // 해양기상부이 및 등표(959 해수서 포함) 최근 6시간 이력
         targetUrl = `https://apihub.kma.go.kr/api/typ01/url/sea_obs.php?tm1=${tm1}&tm2=${tm2}&stn=0&help=0&authKey=${cleanKey}`;
     } else if (type === 'aws') {
-        // 방재기상관측(옥도 308 AWS) 최근 6시간 구간 요청
-        targetUrl = `https://apihub.kma.go.kr/api/typ01/url/kma_sfctm3.php?tm1=${tm1}&tm2=${tm2}&stn=308&help=0&authKey=${cleanKey}`;
+        // 방재기상관측 AWS (옥도 308 포함) 최근 6시간 이력
+        targetUrl = `https://apihub.kma.go.kr/api/typ01/cgi-bin/url/nph-aws2_min?tm1=${tm1}&tm2=${tm2}&stn=308&disp=0&help=0&authKey=${cleanKey}`;
     } else if (type === 'warn') {
         targetUrl = `https://apihub.kma.go.kr/api/typ01/url/wrn_now_data.php?fe=f&tm=&disp=0&help=0&authKey=${cleanKey}`;
-    } else {
-        return res.status(400).send('INVALID_TYPE');
     }
 
     try {
@@ -42,15 +32,11 @@ export default async function handler(req, res) {
             cache: 'no-store'
         });
 
-        if (!response.ok) {
-            return res.status(response.status).send(`FETCH_ERROR_${response.status}`);
-        }
-
-        const buffer = await response.arrayBuffer();
+        const arrayBuffer = await response.arrayBuffer();
         res.setHeader('Content-Type', 'text/plain; charset=euc-kr');
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-        return res.status(200).send(Buffer.from(buffer));
-    } catch (err) {
-        return res.status(500).send(`FETCH_ERROR: ${err.message}`);
+        return res.status(200).send(Buffer.from(arrayBuffer));
+    } catch (error) {
+        return res.status(200).send(`FETCH_ERROR: ${error.message}`);
     }
 }
