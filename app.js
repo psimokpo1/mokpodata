@@ -310,11 +310,28 @@ function parseVesselControlCriteria(rawName, decision, route, notes) {
     let isPyungSuOnly = (fullText.includes("(평수)") && !fullText.includes("연해") && !fullText.includes("먼바다")) || isJodoPyungsu;
     let isJejuMegaShip = (tonnage >= 10000) && (r.includes("제주") || fullText.includes("제주"));
 
-    // 항해구역 추출 (선박명, 운항결정, 비고 원문 전체에서 추출하되 사족 문구만 정제)
+    // 항해구역 추출 (괄호 안 어디든 항해구역/해역 표기가 있으면 원문 그대로 추출, 설명 사족만 정제)
     let rawAreaText = ((rawName || '') + " " + (decision || '') + " " + (notes || ''));
-    let areaMatch = rawAreaText.match(/\((평수[^)]*|연해[^)]*|먼바다[^)]*|근해[^)]*)\)/);
+    let areaMatch = rawAreaText.match(/\(([^)]*(?:평수|연해|앞바다|먼바다|근해)[^)]*)\)/);
     let navArea = areaMatch ? areaMatch[1].trim() : '';
-    if (navArea.includes('핵심') || navArea.includes('통제')) navArea = '평수';
+
+    if (navArea.includes('핵심') || navArea.includes('통제')) {
+        navArea = '평수';
+    }
+
+    // 괄호 표기가 없는 경우 운항결정 본문에 명시된 구역 단어만 최소 추출 (임의 추론 없음)
+    if (!navArea) {
+        let decClean = (decision || '').replace(/\s/g, '');
+        if (decClean.includes('평수구역') && !decClean.includes('연해') && !decClean.includes('먼바다')) {
+            navArea = '평수';
+        } else if (decClean.includes('연해') && decClean.includes('먼바다')) {
+            navArea = '연해/먼바다';
+        } else if (decClean.includes('먼바다')) {
+            navArea = '먼바다';
+        } else if (decClean.includes('연해')) {
+            navArea = '연해';
+        }
+    }
 
     return {
         tonnage: tonnage,
@@ -418,7 +435,7 @@ function buildMeteoSubTableHtml(parsed, shipName, routeName) {
 
 function buildNavAreaBadgeHtml(navArea) {
     if (!navArea) return '';
-    let isPyung = navArea.includes('평수') && !navArea.includes('연해') && !navArea.includes('먼바다');
+    let isPyung = navArea.includes('평수') && !navArea.includes('연해') && !navArea.includes('먼바다') && !navArea.includes('앞바다');
     let badgeStyle = isPyung 
         ? 'color:#0284C7; background:#E0F2FE; border:1px solid #BAE6FD;' 
         : 'color:#4338CA; background:#EEF2FF; border:1px solid #C7D2FE;';
