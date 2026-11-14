@@ -368,7 +368,7 @@ window.toggleMeteoDetailRow = function(shipCode) {
 window.openWeatherHistoryModal = function(stKey) {
     const stData = latestBuoyData[stKey];
     const stName = stData ? (stData.name || stKey) : stKey;
-    const historyArr = stationHistoryMap[stKey] || [];
+    let historyArr = stationHistoryMap[stKey] || [];
 
     let modalEl = document.getElementById('weather-history-modal');
     if (!modalEl) {
@@ -384,7 +384,9 @@ window.openWeatherHistoryModal = function(stKey) {
     if (historyArr.length === 0) {
         rowsHtml = `<tr><td colspan="${isWindOnly ? 4 : 6}" style="text-align:center; padding:20px; color:#94A3B8;">수집된 과거 이력 데이터가 없습니다. (시간 경과 후 갱신됩니다)</td></tr>`;
     } else {
-        // 최신순 또는 시간순 정렬
+        // 시간 역순 정렬 (최신 시간이 위로 오도록)
+        historyArr.sort((a, b) => b.time.localeCompare(a.time));
+
         historyArr.forEach(h => {
             let tStr = h.time || '-';
             let wDir = h.windDir || '-';
@@ -477,7 +479,7 @@ function buildMeteoSubTableHtml(parsed, shipName, routeName) {
         rowsHtml += `
             <tr>
                 <td>${agencyBadge}</td>
-                <td><strong style="cursor:pointer; color:#0284C7; text-decoration:underline;" onclick="openWeatherHistoryModal('${stKey}')" title="클릭 시 '${stData.name || stKey}' 과거 이력 타임테이블 조회">${stData.name || stKey}</strong></td>
+                <td><strong style="cursor:pointer; color:#0284C7; text-decoration:underline;" onclick="openWeatherHistoryModal('${stKey}')" title="클릭 시 '${stData.name || stKey}' 과거 이력 조회">${stData.name || stKey}</strong></td>
                 <td style="${windStyle}">${windDisplay}</td>
                 <td>${waveStr}</td>
                 <td><span style="color:#059669; font-weight:bold;">실시간 연동</span></td>
@@ -710,7 +712,6 @@ function renderOperationBoard() {
                     if (hasRealSig && hasRealMax) waveText = `유의 ${sigVal.toFixed(1)}m (최대 ${maxVal.toFixed(1)}m)`;
                     else if (hasRealSig) waveText = `유의 ${sigVal.toFixed(1)}m`;
 
-                    // 관측소 이름을 클릭하면 해당 관측소의 과거 이력 타임테이블 모달이 열리도록 링크 적용
                     let clickableTitle = `<span style="cursor:pointer; color:#0284C7; text-decoration:underline;" onclick="openWeatherHistoryModal('${stKey}')" title="클릭 시 '${stTitle}' 과거 이력 조회">${stTitle}</span>`;
 
                     if (isKhoa) {
@@ -749,7 +750,7 @@ function renderOperationBoard() {
             } else if (parsed.isPyungSuOnly) {
                 if (isAnyWindDanger || isAnyWaveDanger) { status = 'danger'; statusBadge = '<span class="status-badge badge-danger">🔴 통제위험</span>'; countDanger++; }
                 else if (isAnyWindWarn || isAnyWaveWarn) { status = 'warn'; statusBadge = '<span class="status-badge badge-warn">🟡 통제주의</span>'; countWarn++; }
-                else { status = 'ok'; statusBadge = '<span class="status-badge badge-ok">🟢 정상 (평수)</span>'; countOk++; }
+                else { status = 'ok'; statusBadge = `<span class="status-badge badge-ok">🟢 정상 (평수)</span>`; countOk++; }
             } else if (parsed.stations && parsed.stations.length > 0) {
                 if (isAnyWindDanger || isAnyWaveDanger) { status = 'danger'; statusBadge = '<span class="status-badge badge-danger">🔴 통제위험</span>'; countDanger++; }
                 else if (isAnyWindWarn || isAnyWaveWarn || hasPreWarning) { status = 'warn'; statusBadge = '<span class="status-badge badge-warn">🟡 통제주의(예비/근접)</span>'; countWarn++; }
@@ -1004,7 +1005,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         let tempHistory = {};
         Object.keys(latestBuoyData).forEach(k => { tempHistory[k] = []; });
 
-        // 1. 기상청 부이 및 등표(해수서) 통합 파싱 (과거 로그 수집)
+        // 1. 기상청 부이 및 등표(해수서) 통합 파싱 (시간대별 로그 파싱 보강)
         if (textBuoy) {
             const lines = textBuoy.split('\n');
             const targetBuoys = [
@@ -1024,7 +1025,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                 if (cols.length < 9) return;
 
                 const tmStr = cols[1] || ''; // 예: 202611140700
-                const timeOnly = tmStr.length >= 12 ? `${tmStr.substring(8,10)}:${tmStr.substring(10,12)}` : tmStr;
+                let timeOnly = tmStr.length >= 12 ? `${tmStr.substring(8,10)}:${tmStr.substring(10,12)}` : (cols[0] || '최신');
                 const stnId = cols[2];
                 const stnName = cols[3] || '';
 
@@ -1038,13 +1039,15 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                         let dVal = (!isNaN(rawWd) && rawWd >= 0) ? degToDirection(rawWd) : '-';
                         let whVal = (!isNaN(rawWh) && rawWh >= 0.0 && rawWh <= 12.0) ? rawWh.toFixed(1) : '-';
 
-                        tempHistory[tb.key].push({
-                            time: timeOnly,
-                            wind: wVal,
-                            windDir: dVal,
-                            sigWave: whVal,
-                            maxWave: '-'
-                        });
+                        if (wVal !== '-' || whVal !== '-') {
+                            tempHistory[tb.key].push({
+                                time: timeOnly,
+                                wind: wVal,
+                                windDir: dVal,
+                                sigWave: whVal,
+                                maxWave: '-'
+                            });
+                        }
 
                         // 최신 값 갱신
                         if (wVal !== '-') {
@@ -1070,7 +1073,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                 const cols = line.split(/[\s,]+/).filter(Boolean);
                 if (cols.length >= 4 && cols[1] === '308') {
                     let tmStr = cols[0] || '';
-                    let timeOnly = tmStr.length >= 12 ? `${tmStr.substring(8,10)}:${tmStr.substring(10,12)}` : tmStr;
+                    let timeOnly = tmStr.length >= 12 ? `${tmStr.substring(8,10)}:${tmStr.substring(10,12)}` : '최신';
                     const wd1 = parseFloat(cols[2]);
                     const ws1 = parseFloat(cols[3]);
                     const wd10 = cols.length >= 8 ? parseFloat(cols[6]) : -99;
@@ -1097,16 +1100,16 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             });
         }
 
-        // 3. 측위정보원 등대
+        // 3. 측위정보원 등대 (시간 파싱 키 확장 보강)
         if (dataNmpnt && dataNmpnt.result && dataNmpnt.result.recordset) {
             const records = dataNmpnt.result.recordset;
             records.forEach(item => {
-                const code = String(item.MMSI_CODE || '').trim();
-                const name = String(item.MMSI_NM || '').trim();
-                const ws = parseFloat(item.WIND_SPEED);
-                const wd = parseFloat(item.WIND_DIRECT);
-                let tmStr = String(item.RECORD_TIME || item.TIME || '');
-                let timeOnly = tmStr.length >= 16 ? tmStr.substring(11, 16) : tmStr;
+                const code = String(item.MMSI_CODE || item.mmsi_code || '').trim();
+                const name = String(item.MMSI_NM || item.mmsi_nm || '').trim();
+                const ws = parseFloat(item.WIND_SPEED ?? item.wind_speed ?? item.ws);
+                const wd = parseFloat(item.WIND_DIRECT ?? item.wind_direct ?? item.wd);
+                let tmStr = String(item.RECORD_TIME || item.record_time || item.TIME || item.time || item.REG_DATE || item.TM || '');
+                let timeOnly = tmStr.length >= 16 ? tmStr.substring(11, 16) : (tmStr.includes(' ') ? tmStr.split(' ')[1].substring(0,5) : (tmStr || '최신'));
 
                 if (!isNaN(ws) && ws >= 0 && ws < 60) {
                     const dirStr = (!isNaN(wd) && wd >= 0) ? degToDirection(wd) : '북서풍';
@@ -1136,29 +1139,34 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             });
         }
 
-        // 4. 국립해양조사원 해양관측부이 및 조위관측소 파싱
+        // 4. 국립해양조사원(KHOA) 조사원 부이 및 조위관측소 파싱 보강
         const parseKhoaStationHistory = (resObj, targetKey) => {
-            if (!resObj || !resObj.rawItems) return;
-            resObj.rawItems.forEach(item => {
+            if (!resObj) return;
+            let items = resObj.rawItems || (resObj.result?.data ? [resObj.result.data] : []);
+            if (!Array.isArray(items)) items = [items];
+
+            items.forEach(item => {
                 const ws = parseFloat(item.windSpeed ?? item.wind_speed ?? item.wspd ?? item.ws);
                 const wd = parseFloat(item.windDir ?? item.wind_dir ?? item.wdir ?? item.wd);
                 const sigW = parseFloat(item.waveHeight ?? item.waveHgt ?? item.wave_hgt ?? item.sigWaveHgt ?? item.swh ?? item.wh);
                 const maxW = parseFloat(item.maxWaveHeight ?? item.maxWaveHgt ?? item.max_wave_hgt ?? item.mwh);
                 let tmStr = String(item.obsTime ?? item.record_time ?? item.tm ?? item.obsDt ?? '');
-                let timeOnly = tmStr.length >= 16 ? tmStr.substring(11, 16) : tmStr;
+                let timeOnly = tmStr.length >= 16 ? tmStr.substring(11, 16) : (tmStr.includes(' ') ? tmStr.split(' ')[1].substring(0,5) : '최신');
 
                 let wStr = (!isNaN(ws) && ws >= 0 && ws < 80) ? ws.toFixed(1) : '-';
                 let dStr = (!isNaN(wd) && wd >= 0) ? degToDirection(wd) : '-';
                 let sWave = (!isNaN(sigW) && sigW >= 0) ? sigW.toFixed(1) : '-';
                 let mWave = (!isNaN(maxW) && maxW >= 0) ? maxW.toFixed(1) : '-';
 
-                tempHistory[targetKey].push({
-                    time: timeOnly,
-                    wind: wStr,
-                    windDir: dStr,
-                    sigWave: sWave,
-                    maxWave: mWave
-                });
+                if (wStr !== '-' || sWave !== '-') {
+                    tempHistory[targetKey].push({
+                        time: timeOnly,
+                        wind: wStr,
+                        windDir: dStr,
+                        sigWave: sWave,
+                        maxWave: mWave
+                    });
+                }
             });
 
             if (resObj.result?.data) {
@@ -1185,11 +1193,15 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         parseKhoaStationHistory(dataKhoaChilsan, '칠산조사원');
         parseKhoaStationHistory(dataKhoaHyanghwa, '향화도조위');
 
-        // 최종 수집된 이력을 전역 history map에 반영 (시간 역순 정렬 등)
+        // 관측소별 이력 중복 제거 및 시간 순서 정렬
         Object.keys(tempHistory).forEach(k => {
             if (tempHistory[k].length > 0) {
-                // 중복 제거 및 시간순/역순 정렬
-                stationHistoryMap[k] = tempHistory[k].reverse();
+                let uniqueMap = {};
+                tempHistory[k].forEach(h => {
+                    // 동일한 시간 데이터가 들어오면 최신값 유지
+                    uniqueMap[h.time] = h;
+                });
+                stationHistoryMap[k] = Object.values(uniqueMap);
             }
         });
 
