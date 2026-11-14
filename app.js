@@ -54,11 +54,12 @@ let latestBuoyData = {
     '홍도등대':   { stnId: '1079002', type: 'nmpnt',  name: '홍도등대(측위)',     wind: '-', windDir: '-', sigWave: null, maxWave: null },
     '하조도':     { stnId: '1079005', type: 'nmpnt',  name: '하조도등대(측위)',   wind: '-', windDir: '-', sigWave: null, maxWave: null },
     '계마항':     { stnId: '1079007', type: 'nmpnt',  name: '계마항등대(측위)',   wind: '-', windDir: '-', sigWave: null, maxWave: null },
-    // [국립해양조사원 해양관측부이 / 과학기지 - 풍속 및 유의/최대파고]
+    // [국립해양조사원 해양관측부이 / 과학기지 / 조위관측소 풍속계]
     '추자조사원': { obsCode: 'KG_0025', type: 'khoa', name: '추자부이(조사원)',   wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
     '맹골조사원': { obsCode: 'KG_0102', type: 'khoa', name: '맹골부이(조사원)',   wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
     '가거초조사원':{ obsCode: 'IE_0061', type: 'khoa', name: '가거초기지(조사원)', wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
-    '칠산조사원': { obsCode: 'KG_0024', type: 'khoa', name: '칠산부이(조사원)',   wind: '-', windDir: '-', sigWave: '-', maxWave: '-' }
+    '칠산조사원': { obsCode: 'KG_0024', type: 'khoa', name: '칠산부이(조사원)',   wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
+    '향화도조위': { obsCode: 'DT_0065', type: 'khoa', name: '향화도조위(조사원)', wind: '-', windDir: '-', sigWave: null, maxWave: null }
 };
 
 let activeSeaWarnings = {
@@ -188,7 +189,7 @@ function initRealtimeSync() {
 }
 
 // ==========================================
-// 3. 선박 통제기준 파서 (조사원 부이 자동 매칭 포함)
+// 3. 선박 통제기준 파서 (향화도 조위관측소 매칭 포함)
 // ==========================================
 function parseVesselControlCriteria(rawName, decision, route, notes) {
     let fullText = ((rawName || '') + " " + (decision || '') + " " + (notes || '')).replace(/\s/g, '');
@@ -225,6 +226,9 @@ function parseVesselControlCriteria(rawName, decision, route, notes) {
     }
 
     let stations = [];
+    if (fullText.includes("향화") || fullText.includes("향화도") || r.includes("향화")) {
+        if (!stations.includes('향화도조위')) stations.push('향화도조위');
+    }
     if (fullText.includes("외달") || fullText.includes("외달도") || r.includes("외달")) { if (!stations.includes('외달도')) stations.push('외달도'); }
     if (fullText.includes("안좌") || fullText.includes("복호")) { if (!stations.includes('안좌')) stations.push('안좌'); }
     if (fullText.includes("하조도") || fullText.includes("창유") || fullText.includes("조도")) {
@@ -290,7 +294,7 @@ function parseVesselControlCriteria(rawName, decision, route, notes) {
             relatedSeas.push((fullText.includes("가거도") || fullText.includes("핑크돌핀") || fullText.includes("뉴퀸")) ? "서해남부남쪽안쪽먼바다" : "서해남부북쪽안쪽먼바다", "서해남부앞바다(전남중부)");
         } else if (r.includes("제주")) {
             relatedSeas.push("서해남부앞바다(전남중부)", "서해남부앞바다(전남남부)", "서해남부남쪽안쪽먼바다", "남해서부서쪽먼바다", "제주도북부앞바다");
-        } else if (r.includes("안마") || r.includes("낙월") || r.includes("송이") || r.includes("계마")) {
+        } else if (r.includes("안마") || r.includes("낙월") || r.includes("송이") || r.includes("계마") || r.includes("향화")) {
             relatedSeas.push("서해남부북쪽안쪽먼바다", "서해남부앞바다(전남북부)");
         } else if (r.includes("진도") || r.includes("가사") || r.includes("쉬미") || r.includes("율목")) {
             relatedSeas.push("서해남부앞바다(전남남부)", "서해남부남쪽안쪽먼바다");
@@ -350,7 +354,7 @@ function buildMeteoSubTableHtml(parsed, shipName, routeName) {
         else if (stData.type === 'aws') agencyBadge = '<span style="background:#CCFBF1; color:#0F766E; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:10.5px;">기상청 AWS</span>';
         else if (stData.type === 'beacon') agencyBadge = '<span style="background:#EDE9FE; color:#6D28D9; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:10.5px;">기상청 등표</span>';
         else if (stData.type === 'nmpnt') agencyBadge = '<span style="background:#EFF6FF; color:#1D4ED8; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:10.5px;">측위정보원</span>';
-        else if (stData.type === 'khoa') agencyBadge = '<span style="background:#ECFDF5; color:#047857; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:10.5px;">해양조사원 부이</span>';
+        else if (stData.type === 'khoa') agencyBadge = '<span style="background:#ECFDF5; color:#047857; padding:2px 6px; border-radius:4px; font-weight:bold; font-size:10.5px;">해양조사원</span>';
 
         const windVal = parseFloat(stData.wind);
         const hasWind = !isNaN(windVal);
@@ -567,6 +571,7 @@ function renderOperationBoard() {
                     let isBeacon = (stData.type === 'beacon');
                     let isNmpnt = (stData.type === 'nmpnt');
                     let isKhoa = (stData.type === 'khoa');
+                    let isTideOnlyWind = (stData.sigWave === null);
 
                     let windVal = parseFloat(stData.wind);
                     let hasRealWind = !isNaN(windVal);
@@ -579,7 +584,7 @@ function renderOperationBoard() {
                     let hasRealSig = !isNaN(sigVal);
                     let hasRealMax = !isNaN(maxVal);
 
-                    if (!isAws && !isNmpnt) {
+                    if (!isAws && !isNmpnt && !isTideOnlyWind) {
                         if (parsed.sigWaveLimit && hasRealSig && sigVal >= parsed.sigWaveLimit) isAnyWaveDanger = true;
                         if (parsed.maxWaveLimit && hasRealMax && maxVal >= parsed.maxWaveLimit) isAnyWaveDanger = true;
                     }
@@ -591,7 +596,7 @@ function renderOperationBoard() {
 
                     if (isKhoa) {
                         stationPoints.push(`🌊 <span style="color:#059669; font-weight:bold;">${stTitle}</span>`);
-                        stationRenders.push(`<div style="margin-bottom:3px;"><span style="color:#059669; font-weight:bold; font-size:11px;">[${stTitle}]</span> 풍속: ${windText} / 파고: ${waveText}</div>`);
+                        stationRenders.push(`<div style="margin-bottom:3px;"><span style="color:#059669; font-weight:bold; font-size:11px;">[${stTitle}]</span> 풍속: ${windText}${!isTideOnlyWind ? ' / 파고: ' + waveText : ''}</div>`);
                     } else if (isNmpnt) {
                         stationPoints.push(`🏢 <span style="color:#2563EB; font-weight:bold;">${stTitle}</span>`);
                         stationRenders.push(`<div style="margin-bottom:3px;"><span style="color:#2563EB; font-weight:bold; font-size:11px;">[${stTitle}]</span> 풍속: ${windText}</div>`);
@@ -852,7 +857,8 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=KG_0025&_t=${Date.now()}`, {}, 5000).then(r => r.json()),
             fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=KG_0102&_t=${Date.now()}`, {}, 5000).then(r => r.json()),
             fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=IE_0061&_t=${Date.now()}`, {}, 5000).then(r => r.json()),
-            fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=KG_0024&_t=${Date.now()}`, {}, 5000).then(r => r.json())
+            fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=KG_0024&_t=${Date.now()}`, {}, 5000).then(r => r.json()),
+            fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=DT_0065&_t=${Date.now()}`, {}, 5000).then(r => r.json())
         ]);
 
         const textBuoy = results[0].status === 'fulfilled' ? results[0].value : null;
@@ -863,6 +869,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         const dataKhoaMaenggol = results[5].status === 'fulfilled' ? results[5].value : null;
         const dataKhoaGageocho = results[6].status === 'fulfilled' ? results[6].value : null;
         const dataKhoaChilsan = results[7].status === 'fulfilled' ? results[7].value : null;
+        const dataKhoaHyanghwa = results[8].status === 'fulfilled' ? results[8].value : null;
 
         let updatedCount = 0;
 
@@ -957,8 +964,8 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             });
         }
 
-        // 4. 국립해양조사원 해양관측부이/기지 파싱 (풍속 + 유의/최대파고)
-        const parseKhoaBuoy = (resObj, targetKey) => {
+        // 4. 국립해양조사원 해양관측부이/기지 및 조위관측소(향화도) 파싱
+        const parseKhoaStation = (resObj, targetKey) => {
             if (!resObj || !resObj.result || !resObj.result.data) return false;
             const kData = resObj.result.data;
             let hasAnyData = false;
@@ -971,25 +978,28 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                 hasAnyData = true;
             }
 
-            const sigW = parseFloat(kData.sig_wave);
-            if (!isNaN(sigW) && sigW >= 0 && sigW <= 20) {
-                latestBuoyData[targetKey].sigWave = sigW.toFixed(1);
-                hasAnyData = true;
-            }
+            if (latestBuoyData[targetKey].sigWave !== null) {
+                const sigW = parseFloat(kData.sig_wave);
+                if (!isNaN(sigW) && sigW >= 0 && sigW <= 20) {
+                    latestBuoyData[targetKey].sigWave = sigW.toFixed(1);
+                    hasAnyData = true;
+                }
 
-            const maxW = parseFloat(kData.max_wave);
-            if (!isNaN(maxW) && maxW >= 0 && maxW <= 30) {
-                latestBuoyData[targetKey].maxWave = maxW.toFixed(1);
-                hasAnyData = true;
+                const maxW = parseFloat(kData.max_wave);
+                if (!isNaN(maxW) && maxW >= 0 && maxW <= 30) {
+                    latestBuoyData[targetKey].maxWave = maxW.toFixed(1);
+                    hasAnyData = true;
+                }
             }
 
             return hasAnyData;
         };
 
-        if (parseKhoaBuoy(dataKhoaChuja, '추자조사원')) updatedCount++;
-        if (parseKhoaBuoy(dataKhoaMaenggol, '맹골조사원')) updatedCount++;
-        if (parseKhoaBuoy(dataKhoaGageocho, '가거초조사원')) updatedCount++;
-        if (parseKhoaBuoy(dataKhoaChilsan, '칠산조사원')) updatedCount++;
+        if (parseKhoaStation(dataKhoaChuja, '추자조사원')) updatedCount++;
+        if (parseKhoaStation(dataKhoaMaenggol, '맹골조사원')) updatedCount++;
+        if (parseKhoaStation(dataKhoaGageocho, '가거초조사원')) updatedCount++;
+        if (parseKhoaStation(dataKhoaChilsan, '칠산조사원')) updatedCount++;
+        if (parseKhoaStation(dataKhoaHyanghwa, '향화도조위')) updatedCount++;
 
         // 5. 특보 파싱
         if (textWarn) parseWeatherWarnings(textWarn);
