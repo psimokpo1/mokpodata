@@ -1,4 +1,4 @@
-// api/khoa.js (국립해양조사원 바다누리 다중 엔드포인트 자동 연결)
+// api/khoa.js
 export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -15,45 +15,35 @@ export default async function handler(req, res) {
     const cleanKey = String(serviceKey).trim();
     const cleanObs = String(obsCode).trim();
 
-    // 바다누리 공식 API 후보 엔드포인트 목록
-    const candidateUrls = [
+    // 한국 표준시(KST) 오늘 날짜 (YYYYMMDD) 계산
+    const kstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
+    const todayStr = kstNow.toISOString().slice(0, 10).replace(/-/g, '');
+
+    const urls = [
         `http://www.khoa.go.kr/api/oceangrid/tideObsRecent/search.do?ServiceKey=${cleanKey}&ObsCode=${cleanObs}&ResultType=json`,
-        `https://www.khoa.go.kr/api/oceangrid/tideObsRecent/search.do?ServiceKey=${cleanKey}&ObsCode=${cleanObs}&ResultType=json`,
-        `http://www.khoa.go.kr/oceangrid/grid/api/tideObsRecent/search.do?ServiceKey=${cleanKey}&ObsCode=${cleanObs}&ResultType=json`
+        `http://www.khoa.go.kr/api/oceangrid/tideObs/search.do?ServiceKey=${cleanKey}&ObsCode=${cleanObs}&Date=${todayStr}&ResultType=json`
     ];
 
-    let lastHtmlPreview = "";
-
-    for (const url of candidateUrls) {
+    for (const url of urls) {
         try {
             const response = await fetch(url, {
-                headers: { 
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-                    'Accept': 'application/json, text/plain, */*'
-                },
+                headers: { 'User-Agent': 'Mozilla/5.0' },
                 cache: 'no-store'
             });
-
-            const rawText = await response.text();
-            
-            // 순수 JSON 응답일 경우 즉시 반환
-            if (rawText.trim().startsWith('{')) {
-                const data = JSON.parse(rawText);
-                res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-                return res.status(200).json(data);
-            } else {
-                // HTML이 떨어졌을 경우 본문 텍스트만 추출해서 기록
-                lastHtmlPreview = rawText.replace(/<[^>]*>?/gm, ' ').replace(/\s+/g, ' ').trim().substring(0, 200);
+            const text = await response.text();
+            if (text.trim().startsWith('{')) {
+                const json = JSON.parse(text);
+                // tideObs(배열) 응답일 경우 가장 마지막 최신 레코드를 data 객체로 정규화
+                if (json.result && Array.isArray(json.result.data) && json.result.data.length > 0) {
+                    const latest = json.result.data[json.result.data.length - 1];
+                    return res.status(200).json({ result: { data: latest } });
+                }
+                if (json.result && json.result.data && !Array.isArray(json.result.data)) {
+                    return res.status(200).json(json);
+                }
             }
-        } catch (e) {
-            lastHtmlPreview = e.message;
-        }
+        } catch (e) {}
     }
 
-    // 모든 경로가 실패했을 경우 HTML 안의 실제 안내 문구 출력
-    return res.status(200).json({ 
-        result: { data: null }, 
-        error: "조사원 API 응답 실패 (안내문 확인)",
-        message: lastHtmlPreview
-    });
+    return res.status(200).json({ result: { data: null }, error: "KHOA_NO_DATA" });
 }
