@@ -1,4 +1,4 @@
-// api/kma.js (부이+등표 통합 + 옥도 AWS + 특보 완결본)
+// api/kma.js
 export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -12,14 +12,12 @@ export default async function handler(req, res) {
 
     let targetUrl = '';
     if (type === 'buoy' || type === 'beacon') {
-        // 해양기상부이(B) 및 등표(L, 해수서 959 포함) 통합 관측자료
         targetUrl = `https://apihub.kma.go.kr/api/typ01/url/sea_obs.php?&stn=0&help=1&authKey=${finalKey}`;
     } else if (type === 'warn') {
-        // 기상특보 통보문
         targetUrl = `https://apihub.kma.go.kr/api/typ01/url/fct_shrt_reg.php?mode=0&help=1&authKey=${finalKey}`;
     } else if (type === 'aws') {
-        // 방재기상관측 AWS (옥도 308 포함)
-        targetUrl = `https://apihub.kma.go.kr/api/typ01/url/nph-aws2_min?stn=308&disp=0&help=1&authKey=${finalKey}`;
+        // 💡 옥도 AWS 실제 동작 엔드포인트 (cgi-bin 경로)
+        targetUrl = `https://apihub.kma.go.kr/api/typ01/cgi-bin/url/nph-aws2_min?stn=308&disp=0&help=1&authKey=${finalKey}`;
     } else {
         return res.status(400).send("INVALID_TYPE");
     }
