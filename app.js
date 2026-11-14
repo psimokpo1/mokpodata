@@ -310,11 +310,12 @@ function parseVesselControlCriteria(rawName, decision, route, notes) {
     let isPyungSuOnly = (fullText.includes("(평수)") && !fullText.includes("연해") && !fullText.includes("먼바다")) || isJodoPyungsu;
     let isJejuMegaShip = (tonnage >= 10000) && (r.includes("제주") || fullText.includes("제주"));
 
-    // 항해구역 추출 (기초자료 원문에 명시된 표기만 100% 그대로 추출, 임의 추론 없음)
-    let rawAreaText = ((rawName || '') + " " + (decision || '') + " " + (notes || ''));
+    // 항해구역 추출 (비고란 제외, 선박명 및 운항결정 원문에서만 추출)
+    let rawAreaText = ((rawName || '') + " " + (decision || ''));
     let areaMatch = rawAreaText.match(/\((평수[^)]*|연해[^)]*|먼바다[^)]*|근해[^)]*)\)/);
     let navArea = areaMatch ? areaMatch[1].trim() : '';
-
+    if (navArea.includes('핵심') || navArea.includes('통제')) navArea = '평수';
+    
     return {
         tonnage: tonnage,
         navArea: navArea,
