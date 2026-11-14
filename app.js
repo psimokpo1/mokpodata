@@ -34,7 +34,8 @@ const DEFAULT_NMPNT_KEY = "A8ECE1B4-0A1E-43E9-A5D4-7D4D906FC401";
 const DEFAULT_KHOA_KEY = "47f38047094726017ef3dadeff2e4c2733c634c7878d7aa7f56a6a5b226c9eb3";
 
 function degToDirection(deg) {
-    if (isNaN(deg) || deg === null || deg === undefined) return "북서";
+    if (isNaN(deg) || deg === null || deg === undefined || deg < 0) return "북서";
+    if (deg === 0) return "정온/북";
     const dirs = ["북", "북북동", "북동", "동북동", "동", "동남동", "남동", "남남동", "남", "남남서", "남서", "서남서", "서", "서북서", "북서", "북북서"];
     let idx = Math.round(deg / 22.5) % 16;
     return dirs[idx] + "풍";
@@ -192,7 +193,7 @@ function initRealtimeSync() {
 }
 
 // ==========================================
-// 3. 선박 통제기준 및 항해구역 파서
+// 3. 선박 통제기준 및 항해구역 파서 (오판 방지 강화)
 // ==========================================
 function parseVesselControlCriteria(rawName, decision, route, notes) {
     let fullText = ((rawName || '') + " " + (decision || '') + " " + (notes || '')).replace(/\s/g, '');
@@ -212,20 +213,23 @@ function parseVesselControlCriteria(rawName, decision, route, notes) {
 
     let windLimit = null;
     let windMatch = fullText.match(/(\d+(?:\.\d+)?)\s*m\/s/i);
-    if (windLimit === null && windMatch) windLimit = parseFloat(windMatch[1]);
+    if (windMatch) {
+        let parsedW = parseFloat(windMatch[1]);
+        if (parsedW >= 5.0) windLimit = parsedW;
+    }
 
     let sigWaveLimit = null;
     let maxWaveLimit = null;
 
     let sigMatch = fullText.match(/유의파고[:\s]*(\d+(?:\.\d+)?)\s*m/i);
-    if (sigMatch) sigWaveLimit = parseFloat(sigMatch[1]);
+    if (sigMatch && parseFloat(sigMatch[1]) >= 1.0) sigWaveLimit = parseFloat(sigMatch[1]);
 
     let maxMatch = fullText.match(/최대파고[:\s]*(\d+(?:\.\d+)?)\s*m/i);
-    if (maxMatch) maxWaveLimit = parseFloat(maxMatch[1]);
+    if (maxMatch && parseFloat(maxMatch[1]) >= 1.0) maxWaveLimit = parseFloat(maxMatch[1]);
 
     if (!sigMatch && !maxMatch) {
-        let genMatch = fullText.match(/(?:파고)[:\s]*(\d+(?:\.\d+)?)\s*m/i) || fullText.match(/(\d+(?:\.\d+)?)\s*m(?!\/s)/i);
-        if (genMatch) sigWaveLimit = parseFloat(genMatch[1]);
+        let genMatch = fullText.match(/파고[:\s]*(\d+(?:\.\d+)?)\s*m(?!\/s)/i);
+        if (genMatch && parseFloat(genMatch[1]) >= 1.0) sigWaveLimit = parseFloat(genMatch[1]);
     }
 
     let stations = [];
@@ -383,7 +387,6 @@ window.openWeatherHistoryModal = function(stKey) {
     const stName = stData ? (stData.name || stKey) : stKey;
     let rawHistory = stationHistoryMap[stKey] || [];
 
-    // 최근 6시간 이내 기록만 필터링
     let historyArr = rawHistory.filter(h => isWithinLast6Hours(h.sortKey));
 
     let modalEl = document.getElementById('weather-history-modal');
@@ -847,7 +850,7 @@ function renderOperationBoard() {
 }
 
 // ==========================================
-// 5. 기상특보 파싱 및 통신 엔진 (0.0 덮어쓰기 차단 + 6시간 이력 수집)
+// 5. 기상특보 파싱 및 통신 엔진 (정온 0.0 정상 표출 + 음수 결측만 필터링)
 // ==========================================
 function setSeaWarningByLatestFc(seaKey, alertType, fcTimeNum) {
     let prevFc = seaWarningTimestamps[seaKey] || 0;
@@ -1015,7 +1018,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
 
         let updatedCount = 0;
 
-        // 1. 기상청 부이 및 등표(해수서) 파싱
+        // 1. 기상청 부이 및 등표(해수서) 파싱 (음수 결측만 필터링하여 정온 0.0 정상 표출)
         if (textBuoy) {
             const lines = textBuoy.split('\n');
             const targetBuoys = [
@@ -1047,10 +1050,8 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                         let rawWs = parseFloat(cols[8]);
                         let rawMaxWh = cols.length >= 10 ? parseFloat(cols[9]) : NaN;
 
-                        let isInvalidZeroWind = (rawWs === 0 && rawWd === 0);
-
-                        let wVal = (!isInvalidZeroWind && !isNaN(rawWs) && rawWs >= 0 && rawWs < 50.0) ? rawWs.toFixed(1) : '-';
-                        let dVal = (!isInvalidZeroWind && !isNaN(rawWd) && rawWd >= 0 && rawWd <= 360) ? degToDirection(rawWd) : '-';
+                        let wVal = (!isNaN(rawWs) && rawWs >= 0 && rawWs < 50.0) ? rawWs.toFixed(1) : '-';
+                        let dVal = (!isNaN(rawWd) && rawWd >= 0 && rawWd <= 360) ? degToDirection(rawWd) : '-';
                         let whVal = (!isNaN(rawWh) && rawWh >= 0.0 && rawWh <= 12.0) ? rawWh.toFixed(1) : '-';
                         let maxWhVal = (!isNaN(rawMaxWh) && rawMaxWh >= 0.0 && rawMaxWh <= 20.0) ? rawMaxWh.toFixed(1) : '-';
 
@@ -1082,7 +1083,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             });
         }
 
-        // 2. 기상청 AWS (옥도 308)
+        // 2. 기상청 AWS (옥도 308) - 정온(0.0) 정상 표출 및 음수 결측(-99)만 제외
         if (textAws) {
             const awsLines = textAws.split('\n');
             let latestAwsTs = '';
@@ -1102,9 +1103,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                     const finalWs = (!isNaN(ws10) && ws10 >= 0 && ws10 < 100) ? ws10 : ws1;
                     const finalWd = (!isNaN(wd10) && wd10 >= 0 && wd10 <= 360) ? wd10 : wd1;
 
-                    let isInvalidZero = (finalWs === 0 && finalWd === 0);
-
-                    if (!isInvalidZero && !isNaN(finalWs) && finalWs >= 0 && finalWs < 100) {
+                    if (!isNaN(finalWs) && finalWs >= 0 && finalWs < 100) {
                         const wStr = finalWs.toFixed(1);
                         const dStr = (!isNaN(finalWd) && finalWd >= 0 && finalWd <= 360) ? degToDirection(finalWd) : '-';
 
@@ -1140,8 +1139,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                 let tmStr = String(item.RECORD_TIME || item.TIME || item.REG_DATE || '');
                 let timeOnly = tmStr.length >= 16 ? tmStr.substring(11, 16) : (tmStr.includes(' ') ? tmStr.split(' ')[1].substring(0,5) : nowTime);
                 let sortKey = tmStr.replace(/\D/g, '').length >= 12 ? tmStr.replace(/\D/g, '').substring(0, 12) : nowSortKey;
-
-                if (ws === 0 && wd === 0) return;
 
                 if (!isNaN(ws) && ws >= 0 && ws < 60) {
                     const dirStr = (!isNaN(wd) && wd >= 0 && wd <= 360) ? degToDirection(wd) : '-';
