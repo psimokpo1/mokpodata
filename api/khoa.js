@@ -1,4 +1,4 @@
-// api/khoa.js (공공데이터포털 국립해양조사원 GetTWRecentApiService 정식 규격 완결본)
+// api/khoa.js (국립해양조사원 실시간 및 과거 이력 rawItems 완벽 지원)
 export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -12,21 +12,16 @@ export default async function handler(req, res) {
     const cleanKey = String(serviceKey).trim();
     const cleanObs = String(obsCode).trim();
 
-    // 한국 표준시(KST) 당일 날짜 (YYYYMMDD)
     const kstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
     const todayStr = kstNow.toISOString().slice(0, 10).replace(/-/g, '');
 
-    // DT_ 로 시작하면 조위관측소 바람(GetSurveyWindApiService), 그 외는 해양관측부이(GetTWRecentApiService)
     const isTideStation = cleanObs.startsWith('DT_');
     const url = isTideStation
-        ? `https://apis.data.go.kr/1192136/surveyWind/GetSurveyWindApiService?serviceKey=${cleanKey}&obsCode=${cleanObs}&reqDate=${todayStr}&type=json&pageNo=1&numOfRows=10`
-        : `https://apis.data.go.kr/1192136/twRecent/GetTWRecentApiService?serviceKey=${cleanKey}&obsCode=${cleanObs}&reqDate=${todayStr}&type=json&pageNo=1&numOfRows=10`;
+        ? `https://apis.data.go.kr/1192136/surveyWind/GetSurveyWindApiService?serviceKey=${cleanKey}&obsCode=${cleanObs}&reqDate=${todayStr}&type=json&pageNo=1&numOfRows=24`
+        : `https://apis.data.go.kr/1192136/twRecent/GetTWRecentApiService?serviceKey=${cleanKey}&obsCode=${cleanObs}&reqDate=${todayStr}&type=json&pageNo=1&numOfRows=24`;
 
     try {
-        const response = await fetch(url, {
-            headers: { 'User-Agent': 'Mozilla/5.0' },
-            cache: 'no-store'
-        });
+        const response = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, cache: 'no-store' });
         const text = await response.text();
         
         if (!text.trim().startsWith('{')) {
@@ -35,23 +30,24 @@ export default async function handler(req, res) {
 
         const json = JSON.parse(text);
 
-        // 공공데이터포털 표준 응답 파싱 (response.body.items.item 또는 body.items.item)
-        let item = null;
+        let rawItems = null;
         if (json.response?.body?.items?.item) {
-            const rawItem = json.response.body.items.item;
-            item = Array.isArray(rawItem) ? rawItem[rawItem.length - 1] : rawItem;
+            rawItems = json.response.body.items.item;
         } else if (json.body?.items?.item) {
-            const rawItem = json.body.items.item;
-            item = Array.isArray(rawItem) ? rawItem[rawItem.length - 1] : rawItem;
+            rawItems = json.body.items.item;
+        } else if (json.result?.data) {
+            rawItems = [json.result.data];
         }
 
-        if (item) {
-            // 풍향, 풍속, 유의파고, 최대파고 추출 (다양한 영문 키 대응)
-            const ws = item.windSpeed ?? item.wind_speed ?? item.wspd ?? item.ws ?? null;
-            const wd = item.windDir ?? item.wind_dir ?? item.wdir ?? item.wd ?? null;
-            const sigW = item.waveHeight ?? item.waveHgt ?? item.wave_hgt ?? item.sigWaveHgt ?? item.swh ?? item.wh ?? null;
-            const maxW = item.maxWaveHeight ?? item.maxWaveHgt ?? item.max_wave_hgt ?? item.mwh ?? null;
-            const recTime = item.obsTime ?? item.record_time ?? item.tm ?? item.obsDt ?? null;
+        if (rawItems) {
+            const itemsArr = Array.isArray(rawItems) ? rawItems : [rawItems];
+            const latestItem = itemsArr[itemsArr.length - 1];
+
+            const ws = latestItem.windSpeed ?? latestItem.wind_speed ?? latestItem.wspd ?? latestItem.ws ?? null;
+            const wd = latestItem.windDir ?? latestItem.wind_dir ?? latestItem.wdir ?? latestItem.wd ?? null;
+            const sigW = latestItem.waveHeight ?? latestItem.waveHgt ?? latestItem.wave_hgt ?? latestItem.sigWaveHgt ?? latestItem.swh ?? latestItem.wh ?? null;
+            const maxW = latestItem.maxWaveHeight ?? latestItem.maxWaveHgt ?? latestItem.max_wave_hgt ?? latestItem.mwh ?? null;
+            const recTime = latestItem.obsTime ?? latestItem.record_time ?? latestItem.tm ?? latestItem.obsDt ?? null;
 
             res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
             return res.status(200).json({
@@ -64,7 +60,8 @@ export default async function handler(req, res) {
                         record_time: recTime
                     }
                 },
-                rawItem: item
+                rawItem: latestItem,
+                rawItems: itemsArr
             });
         }
 
