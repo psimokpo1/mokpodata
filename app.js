@@ -193,7 +193,7 @@ function initRealtimeSync() {
 }
 
 // ==========================================
-// 3. 선박 통제기준 및 항해구역 파서 (오판 방지 강화)
+// 3. 선박 통제기준 및 항해구역 파서
 // ==========================================
 function parseVesselControlCriteria(rawName, decision, route, notes) {
     let fullText = ((rawName || '') + " " + (decision || '') + " " + (notes || '')).replace(/\s/g, '');
@@ -379,7 +379,7 @@ function isWithinLast6Hours(sortKey) {
     const min = parseInt(digits.substring(10, 12), 10);
     const itemUtcMs = Date.UTC(y, m, d, h - 9, min, 0);
     const diffMs = Date.now() - itemUtcMs;
-    return diffMs >= -10 * 60 * 1000 && diffMs <= 6 * 60 * 60 * 1000 + 10 * 60 * 1000;
+    return diffMs >= -15 * 60 * 1000 && diffMs <= 6 * 60 * 60 * 1000 + 15 * 60 * 1000;
 }
 
 window.openWeatherHistoryModal = function(stKey) {
@@ -441,7 +441,7 @@ window.openWeatherHistoryModal = function(stKey) {
     modalEl.innerHTML = `
         <div style="background:#fff; width:660px; max-width:95vw; max-height:85vh; border-radius:12px; box-shadow:0 10px 25px rgba(0,0,0,0.25); display:flex; flex-direction:column; overflow:hidden;">
             <div style="padding:15px 20px; background:#1E293B; color:#fff; display:flex; justify-content:space-between; align-items:center;">
-                <h3 style="margin:0; font-size:15.5px;">📈 [${stName}] 최근 6시간 기상 관측 이력</h3>
+                <h3 style="margin:0; font-size:15.5px;">📈 [${stName}] 최근 6시간 기상 관측 이력 (${historyArr.length}건)</h3>
                 <button onclick="document.getElementById('weather-history-modal').style.display='none'" style="background:none; border:none; color:#fff; font-size:18px; cursor:pointer; font-weight:bold;">✕</button>
             </div>
             <div style="padding:18px; overflow-y:auto; flex:1;">
@@ -687,7 +687,10 @@ function renderOperationBoard() {
             let isAutoControlledByWarning = false;
             if (hasRealIssuedWarning && parsed.tonnage < 2000 && !parsed.isPyungSuOnly && !parsed.isYulmokRoute) isAutoControlledByWarning = true;
 
-            let wLimit = parsed.windLimit || 12.0;
+            let wLimit = (parsed.windLimit && parsed.windLimit >= 5.0) ? parsed.windLimit : 12.0;
+            let sigLimit = (parsed.sigWaveLimit && parsed.sigWaveLimit >= 1.0) ? parsed.sigWaveLimit : 2.0;
+            let maxLimit = (parsed.maxWaveLimit && parsed.maxWaveLimit >= 1.0) ? parsed.maxWaveLimit : 3.0;
+
             let isAnyWindDanger = false;
             let isAnyWindWarn = false;
             let isAnyWaveDanger = false;
@@ -708,20 +711,22 @@ function renderOperationBoard() {
                     let isKhoa = (stData.type === 'khoa');
                     let isTideOnlyWind = (stData.sigWave === null);
 
-                    let windVal = parseFloat(stData.wind);
-                    let hasRealWind = !isNaN(windVal);
+                    let windVal = Number(stData.wind);
+                    let hasRealWind = (stData.wind !== '-' && !isNaN(windVal) && windVal >= 0 && windVal < 100);
 
                     if (hasRealWind && (windVal >= wLimit)) isAnyWindDanger = true;
-                    if (hasRealWind && (windVal >= (wLimit * 0.85))) isAnyWindWarn = true;
+                    else if (hasRealWind && (windVal >= (wLimit * 0.85))) isAnyWindWarn = true;
 
-                    let sigVal = parseFloat(stData.sigWave);
-                    let maxVal = parseFloat(stData.maxWave);
-                    let hasRealSig = !isNaN(sigVal);
-                    let hasRealMax = !isNaN(maxVal);
+                    let sigVal = Number(stData.sigWave);
+                    let maxVal = Number(stData.maxWave);
+                    let hasRealSig = (stData.sigWave !== '-' && stData.sigWave !== null && !isNaN(sigVal) && sigVal >= 0 && sigVal <= 20);
+                    let hasRealMax = (stData.maxWave !== '-' && stData.maxWave !== null && !isNaN(maxVal) && maxVal >= 0 && maxVal <= 30);
 
                     if (!isAws && !isNmpnt && !isTideOnlyWind) {
-                        if (parsed.sigWaveLimit && hasRealSig && sigVal >= parsed.sigWaveLimit) isAnyWaveDanger = true;
-                        if (parsed.maxWaveLimit && hasRealMax && maxVal >= parsed.maxWaveLimit) isAnyWaveDanger = true;
+                        if (hasRealSig && sigVal >= sigLimit) isAnyWaveDanger = true;
+                        else if (hasRealSig && sigVal >= (sigLimit * 0.85)) isAnyWaveWarn = true;
+
+                        if (parsed.maxWaveLimit && hasRealMax && maxVal >= maxLimit) isAnyWaveDanger = true;
                     }
 
                     let windText = hasRealWind ? `${windVal.toFixed(1)}m/s (${stData.windDir || '-'})` : `<span style="color:#94A3B8;">수신대기</span>`;
@@ -850,7 +855,7 @@ function renderOperationBoard() {
 }
 
 // ==========================================
-// 5. 기상특보 파싱 및 통신 엔진 (정온 0.0 정상 표출 + 음수 결측만 필터링)
+// 5. 기상특보 파싱 및 통신 엔진 (6시간 전체 이력 수집)
 // ==========================================
 function setSeaWarningByLatestFc(seaKey, alertType, fcTimeNum) {
     let prevFc = seaWarningTimestamps[seaKey] || 0;
@@ -946,7 +951,7 @@ function parseWeatherWarnings(rawText) {
     }
 }
 
-async function fetchWithTimeout(url, options = {}, timeout = 5500) {
+async function fetchWithTimeout(url, options = {}, timeout = 7000) {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeout);
     try {
@@ -962,7 +967,7 @@ async function fetchWithTimeout(url, options = {}, timeout = 5500) {
 async function fetchKmaApi(type, authKey) {
     try {
         const url = `/api/kma?type=${type}&authKey=${encodeURIComponent(authKey)}&_t=${Date.now()}`;
-        const response = await fetchWithTimeout(url, {}, 5500);
+        const response = await fetchWithTimeout(url, {}, 7000);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         
         const buffer = await response.arrayBuffer();
@@ -1018,7 +1023,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
 
         let updatedCount = 0;
 
-        // 1. 기상청 부이 및 등표(해수서) 파싱 (음수 결측만 필터링하여 정온 0.0 정상 표출)
+        // 1. 기상청 부이 및 등표(959 해수서) 6시간 이력 및 최신치 파싱
         if (textBuoy) {
             const lines = textBuoy.split('\n');
             const targetBuoys = [
@@ -1083,7 +1088,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             });
         }
 
-        // 2. 기상청 AWS (옥도 308) - 정온(0.0) 정상 표출 및 음수 결측(-99)만 제외
+        // 2. 기상청 AWS (옥도 308) 6시간 이력 및 최신치 파싱
         if (textAws) {
             const awsLines = textAws.split('\n');
             let latestAwsTs = '';
