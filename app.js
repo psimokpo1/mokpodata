@@ -294,8 +294,10 @@ function parseVesselControlCriteria(rawName, decision, route, notes) {
             relatedSeas.push((fullText.includes("가거도") || fullText.includes("핑크돌핀") || fullText.includes("뉴퀸")) ? "서해남부남쪽안쪽먼바다" : "서해남부북쪽안쪽먼바다", "서해남부앞바다(전남중부)");
         } else if (r.includes("제주")) {
             relatedSeas.push("서해남부앞바다(전남중부)", "서해남부앞바다(전남남부)", "서해남부남쪽안쪽먼바다", "남해서부서쪽먼바다", "제주도북부앞바다");
-        } else if (r.includes("안마") || r.includes("낙월") || r.includes("송이") || r.includes("계마") || r.includes("향화")) {
+        } else if (r.includes("안마") || r.includes("계마")) {
             relatedSeas.push("서해남부북쪽안쪽먼바다", "서해남부앞바다(전남북부)");
+        } else if (r.includes("향화") || r.includes("낙월") || r.includes("송이")) {
+            relatedSeas.push("서해남부앞바다(전남북부)");
         } else if (r.includes("진도") || r.includes("가사") || r.includes("쉬미") || r.includes("율목")) {
             relatedSeas.push("서해남부앞바다(전남남부)", "서해남부남쪽안쪽먼바다");
         } else if (fullText.includes("평수")) {
@@ -308,17 +310,10 @@ function parseVesselControlCriteria(rawName, decision, route, notes) {
     let isPyungSuOnly = (fullText.includes("(평수)") && !fullText.includes("연해") && !fullText.includes("먼바다")) || isJodoPyungsu;
     let isJejuMegaShip = (tonnage >= 10000) && (r.includes("제주") || fullText.includes("제주"));
 
-    // 항해구역 자동 추출 (운항결정 및 선박명 원문 기준)
+    // 항해구역 추출 (기초자료 원문에 명시된 표기만 100% 그대로 추출, 임의 추론 없음)
     let rawAreaText = ((rawName || '') + " " + (decision || '') + " " + (notes || ''));
     let areaMatch = rawAreaText.match(/\((평수[^)]*|연해[^)]*|먼바다[^)]*|근해[^)]*)\)/);
     let navArea = areaMatch ? areaMatch[1].trim() : '';
-
-    if (!navArea) {
-        if (isPyungSuOnly || fullText.includes("평수구역")) navArea = "평수";
-        else if (fullText.includes("먼바다") && fullText.includes("연해")) navArea = "연해/먼바다";
-        else if (fullText.includes("앞바다") && fullText.includes("연해")) navArea = "연해/앞바다";
-        else if (fullText.includes("연해")) navArea = "연해";
-    }
 
     return {
         tonnage: tonnage,
