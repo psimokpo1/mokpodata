@@ -620,7 +620,7 @@ function renderOperationBoard() {
             if (parsed.isJejuMegaShip) {
                 if (hasGaleGyeongbo || isAnyWindDanger || isAnyWaveDanger) { status = 'danger'; statusBadge = '<span class="status-badge badge-danger">🔴 통제위험</span>'; countDanger++; }
                 else if (isAnyWindWarn || isAnyWaveWarn) { status = 'warn'; statusBadge = '<span class="status-badge badge-warn">🟡 통제주의</span>'; countWarn++; }
-                else { status = 'ok'; statusBadge = '<span class="status-badge badge-ok">🟢 정상 (대형선)</span>'; countOk++; }
+                else { status = 'ok'; statusBadge = '<span class="status-badge badge-ok">🟢 정상 (2,000g/t 이상)</span>'; countOk++; }
             } else if (isAutoControlledByWarning) {
                 status = 'danger'; statusBadge = '<span class="status-badge badge-danger">🔴 자동통제(특보발효)</span>'; countDanger++;
             } else if (parsed.isYulmokRoute) {
