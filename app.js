@@ -310,12 +310,12 @@ function parseVesselControlCriteria(rawName, decision, route, notes) {
     let isPyungSuOnly = (fullText.includes("(평수)") && !fullText.includes("연해") && !fullText.includes("먼바다")) || isJodoPyungsu;
     let isJejuMegaShip = (tonnage >= 10000) && (r.includes("제주") || fullText.includes("제주"));
 
-    // 항해구역 추출 (비고란 제외, 선박명 및 운항결정 원문에서만 추출)
-    let rawAreaText = ((rawName || '') + " " + (decision || ''));
+    // 항해구역 추출 (선박명, 운항결정, 비고 원문 전체에서 추출하되 사족 문구만 정제)
+    let rawAreaText = ((rawName || '') + " " + (decision || '') + " " + (notes || ''));
     let areaMatch = rawAreaText.match(/\((평수[^)]*|연해[^)]*|먼바다[^)]*|근해[^)]*)\)/);
     let navArea = areaMatch ? areaMatch[1].trim() : '';
     if (navArea.includes('핵심') || navArea.includes('통제')) navArea = '평수';
-    
+
     return {
         tonnage: tonnage,
         navArea: navArea,
@@ -494,6 +494,7 @@ function renderOperationBoard() {
     let countSpecial = 0;
 
     let rowsHtml = "";
+    let mobileHtml = "";
 
     displayList.forEach(ship => {
         try {
@@ -530,13 +531,14 @@ function renderOperationBoard() {
             }
 
             let areaBadgeHtml = buildNavAreaBadgeHtml(parsed.navArea);
+            let tonnageText = ownParsed.tonnage ? `${ownParsed.tonnage.toLocaleString()}G/T` : '-';
 
             if (isRestingBySub && !ship.isHidden) {
                 let subCleanName = (substituteShip.rawName || '').split('(')[0].split('\n')[0].trim();
                 rowsHtml += `
                     <tr class="resting-row">
                         <td><strong>${ship.route}</strong>${areaBadgeHtml}</td>
-                        <td><strong>${cleanName}</strong> <span style="font-size:11px; color:#64748B;">(${ownParsed.tonnage ? ownParsed.tonnage + 'G/T' : '-'})</span></td>
+                        <td><strong>${cleanName}</strong> <span style="font-size:11px; color:#64748B;">(${tonnageText})</span></td>
                         <td colspan="3" style="text-align:center; color:#64748B;">대체선 [${subCleanName}] 투입에 따른 운항정지 및 정비</td>
                         <td><span class="status-badge badge-off">⚪ 휴항/정비 (${subCleanName} 대선)</span></td>
                         <td style="color:#94A3B8;">-</td>
@@ -571,7 +573,7 @@ function renderOperationBoard() {
             let pointDisplay = '';
 
             let isAutoControlledByWarning = false;
-            if (hasRealIssuedWarning && parsed.tonnage <= 2000 && !parsed.isPyungSuOnly && !parsed.isYulmokRoute) isAutoControlledByWarning = true;
+            if (hasRealIssuedWarning && parsed.tonnage < 2000 && !parsed.isPyungSuOnly && !parsed.isYulmokRoute) isAutoControlledByWarning = true;
 
             let wLimit = parsed.windLimit || 12.0;
             let isAnyWindDanger = false;
@@ -638,7 +640,8 @@ function renderOperationBoard() {
                 criteriaDisplay = `풍속 ${wLimit}m/s<br>${parsed.sigWaveLimit ? '유의 ' + parsed.sigWaveLimit + 'm' : '파고 2.0m'}`;
             }
 
-            if (parsed.isJejuMegaShip) {
+            // 2,000G/T 이상 선박(퀸제누비아, 퀸제누비아2, 퀸메리, 산타모니카, 뉴드림 등) 일괄 우선 판정
+            if (parsed.tonnage >= 2000) {
                 if (hasGaleGyeongbo || isAnyWindDanger || isAnyWaveDanger) { status = 'danger'; statusBadge = '<span class="status-badge badge-danger">🔴 통제위험</span>'; countDanger++; }
                 else if (isAnyWindWarn || isAnyWaveWarn) { status = 'warn'; statusBadge = '<span class="status-badge badge-warn">🟡 통제주의</span>'; countWarn++; }
                 else { status = 'ok'; statusBadge = '<span class="status-badge badge-ok">🟢 정상 (2,000G/T 이상)</span>'; countOk++; }
@@ -652,10 +655,6 @@ function renderOperationBoard() {
                 if (isAnyWindDanger || isAnyWaveDanger) { status = 'danger'; statusBadge = '<span class="status-badge badge-danger">🔴 통제위험</span>'; countDanger++; }
                 else if (isAnyWindWarn || isAnyWaveWarn) { status = 'warn'; statusBadge = '<span class="status-badge badge-warn">🟡 통제주의</span>'; countWarn++; }
                 else { status = 'ok'; statusBadge = '<span class="status-badge badge-ok">🟢 정상 (평수)</span>'; countOk++; }
-            } else if (parsed.tonnage > 2000) {
-                if (isAnyWindDanger || isAnyWaveDanger) { status = 'danger'; statusBadge = '<span class="status-badge badge-danger">🔴 통제위험</span>'; countDanger++; }
-                else if (isAnyWindWarn || isAnyWaveWarn || hasPreWarning) { status = 'warn'; statusBadge = '<span class="status-badge badge-warn">🟡 통제주의</span>'; countWarn++; }
-                else { status = 'ok'; statusBadge = '<span class="status-badge badge-ok">🟢 정상 (2,000G/T 이상)</span>'; countOk++; }
             } else if (parsed.stations && parsed.stations.length > 0) {
                 if (isAnyWindDanger || isAnyWaveDanger) { status = 'danger'; statusBadge = '<span class="status-badge badge-danger">🔴 통제위험</span>'; countDanger++; }
                 else if (isAnyWindWarn || isAnyWaveWarn || hasPreWarning) { status = 'warn'; statusBadge = '<span class="status-badge badge-warn">🟡 통제주의(예비/근접)</span>'; countWarn++; }
@@ -687,7 +686,7 @@ function renderOperationBoard() {
                 rowsHtml += `
                     <tr id="ship-row-${ship.code}">
                         <td><strong>${effectiveRoute}</strong>${areaBadgeHtml}</td>
-                        <td><strong>${cleanName}</strong> <span style="font-size:11px; color:#64748B;">(${ownParsed.tonnage ? ownParsed.tonnage + 'G/T' : '-'})</span></td>
+                        <td><strong>${cleanName}</strong> <span style="font-size:11px; color:#64748B;">(${tonnageText})</span></td>
                         <td class="clickable-meteo-cell" onclick="toggleMeteoDetailRow('${ship.code}')" title="클릭 시 관측 상세 테이블이 펼쳐집니다.">
                             ${pointDisplay || '-'} <span class="meteo-expand-indicator" id="meteo-toggle-icon-${ship.code}">▼</span>
                         </td>
@@ -703,6 +702,17 @@ function renderOperationBoard() {
                             ${buildMeteoSubTableHtml(parsed, cleanName, effectiveRoute)}
                         </td>
                     </tr>
+                `;
+
+                mobileHtml += `
+                    <div style="background:#fff; border:1px solid #E2E8F0; border-radius:8px; padding:12px; margin-bottom:10px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                            <div style="font-weight:bold; color:#1E293B;">[${effectiveRoute}${parsed.navArea ? ' (' + parsed.navArea + ')' : ''}] ${cleanName} <span style="font-size:11px; color:#64748B;">(${tonnageText})</span></div>
+                            <div>${statusBadge}</div>
+                        </div>
+                        <div style="font-size:12px; color:#334155; margin-bottom:4px;">${currentDisplay || '관측소 연계 없음'}</div>
+                        <div style="font-size:11.5px; color:#64748B;">기준: 풍속 ${wLimit}m/s / ${parsed.sigWaveLimit ? '유의 ' + parsed.sigWaveLimit + 'm' : '파고 2.0m'}</div>
+                    </div>
                 `;
             }
         } catch (errInner) {
@@ -723,6 +733,7 @@ function renderOperationBoard() {
     if (sumSpecialEl) sumSpecialEl.innerText = countSpecial;
 
     tbody.innerHTML = rowsHtml || `<tr><td colspan="7" style="text-align:center; padding:20px; color:#94A3B8;">해당 조건에 일치하는 선박이 없습니다.</td></tr>`;
+    mobileContainer.innerHTML = mobileHtml || `<div style="text-align:center; padding:20px; color:#94A3B8;">표출할 선박이 없습니다.</div>`;
 }
 
 // ==========================================
