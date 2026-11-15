@@ -260,18 +260,15 @@ function parseVesselControlCriteria(rawName, decision, route, notes, ports = '')
     const addSt = (key) => { if (latestBuoyData[key] && !stations.includes(key)) stations.push(key); };
 
     // 1. 출항항 및 기항지·항로별 정밀 매칭 (체크리스트 6~20번 반영)
-    // 목포항 출항 선박 -> 목포항 해무관측소(SF_007)
     if (r.startsWith("목포-") || p.includes("목포")) {
         addSt('목포항해무');
     }
 
-    // 진도항 출항/기항 선박 -> 진도 조위관측소(DT_0028) & 진도 파고부이(22449)
     if (r.includes("진도") || p.includes("진도")) {
         addSt('진도조위');
         addSt('진도파고');
     }
 
-    // 향화-낙월 항로 -> 향화도조위(DT_0065) + 낙월도 AWS(799)
     if (r.includes("향화-낙월") || r.includes("낙월") || p.includes("낙월")) {
         addSt('향화도조위');
         addSt('낙월도');
@@ -279,7 +276,6 @@ function parseVesselControlCriteria(rawName, decision, route, notes, ports = '')
         addSt('향화도조위');
     }
 
-    // 계마-안마 항로 -> 계마항등대(1079007) + 안마도 AWS(264) (타 해역 KG_0024 제거)
     if (r.includes("계마-안마") || r.includes("안마") || p.includes("안마")) {
         addSt('계마항');
         addSt('안마도');
@@ -287,27 +283,22 @@ function parseVesselControlCriteria(rawName, decision, route, notes, ports = '')
         addSt('계마항');
     }
 
-    // 증도-자은 항로 -> 자은도 AWS(714)
     if (r.includes("증도-자은") || r.includes("자은")) {
         addSt('자은도');
     }
 
-    // 송도-병풍 항로 -> 지도 AWS(707)
     if (r.includes("송도-병풍")) {
         addSt('지도');
     }
 
-    // 송공항 기항 선박 -> 압해도 AWS(789)
     if (r.includes("송공") || p.includes("송공")) {
         addSt('압해도');
     }
 
-    // 가산항 기항 선박 -> 비금 AWS(743)
     if (r.includes("가산") || p.includes("가산")) {
         addSt('비금');
     }
 
-    // 복호항 기항 선박 -> 안좌터미널(1079001) + 안좌 AWS(771)
     if (p.includes("복호") || fullText.includes("복호")) {
         addSt('안좌');
         addSt('안좌AWS');
@@ -315,22 +306,18 @@ function parseVesselControlCriteria(rawName, decision, route, notes, ports = '')
         addSt('안좌');
     }
 
-    // 목포-상태서리, 웅곡 및 당두항 기항 선박 -> 하의도 AWS(716)
     if (r.includes("상태서리") || r.includes("웅곡") || r.includes("하의") || p.includes("웅곡") || p.includes("당두") || p.includes("상태서리")) {
         addSt('하의도');
     }
 
-    // 도초-우이 항로 -> 우이도관측소(TW_0080)
     if (r.includes("도초-우이") || p.includes("우이")) {
         addSt('우이도조사원');
     }
 
-    // 외달도 항로 -> 외달도등표(1079008)
     if (r.includes("외달") || p.includes("외달")) {
         addSt('외달도');
     }
 
-    // 가거도 운항 선박 전용 -> 가거도 부이(22297), 가거도등대(1079003), 가거초기지(IE_0061), 가거도 AWS(303), 하태도 AWS(797)
     const isGageodoVessel = r.includes("가거도") || p.includes("가거도") || fullText.includes("핑크돌핀") || fullText.includes("뉴퀸");
     if (isGageodoVessel) {
         addSt('가거도');
@@ -340,20 +327,17 @@ function parseVesselControlCriteria(rawName, decision, route, notes, ports = '')
         addSt('하태도');
     }
 
-    // 홍도 기항 선박 전용 -> 홍도 부이(22298), 홍도등대(1079002), 홍도 AWS(798)
     if (r.includes("홍도") || p.includes("홍도")) {
         addSt('홍도');
         addSt('홍도등대');
         addSt('홍도AWS');
     }
 
-    // 흑산도 입항 선박 전용 -> 흑산도 부이(22193), 흑산도 AWS(169)
     if (r.includes("흑산") || p.includes("흑산")) {
         addSt('흑산도');
         addSt('흑산도AWS');
     }
 
-    // 율목-진도 및 율목·서거차 기항 선박 -> 조도 파고부이(22500), 맹골수도 파고부이(22481), 진도 파고부이(22449), 해수서 등표(959), 하조도등대(1079005), 서거차조위(DT_0094), 서거차 AWS(697), 상조도 AWS(718)
     if (r.includes("율목") || r.includes("서거차") || r.includes("죽도") || p.includes("율목") || p.includes("서거차")) {
         addSt('조도파고');
         addSt('맹골수도파고');
@@ -369,7 +353,6 @@ function parseVesselControlCriteria(rawName, decision, route, notes, ports = '')
         addSt('하조도');
     }
 
-    // 기존 명시 관측소(신안, 옥도, 칠발도, 추자도) 보완
     if (fullText.includes("옥도")) addSt('옥도');
     if (fullText.includes("신안")) addSt('신안');
     if (fullText.includes("칠발도") || r.includes("홍도") || r.includes("흑산")) addSt('칠발도');
@@ -378,7 +361,6 @@ function parseVesselControlCriteria(rawName, decision, route, notes, ports = '')
         addSt('추자조사원');
     }
 
-    // 기본 폴백 (연계 관측소가 비어 있는 평수구역 등)
     if (stations.length === 0) {
         if (fullText.includes("평수") || r.includes("남강") || r.includes("도초") || r.includes("상태")) {
             addSt('신안');
@@ -867,7 +849,7 @@ function renderOperationBoard() {
                     let sigVal = Number(stData.sigWave);
                     let maxVal = Number(stData.maxWave);
                     let hasRealSig = (stData.sigWave !== '-' && stData.sigWave !== null && !isNaN(sigVal) && sigVal >= 0 && sigVal <= 20);
-                    let hasRealMax = (stData.maxWave !== '-' && stData.maxWave !== null && !isNaN(maxVal) && maxVal >= 0 && maxVal <= 30 && (!hasRealSig || maxVal >= sigVal));
+                    let hasRealMax = (stData.maxWave !== '-' && stData.maxWave !== null && !isNaN(maxVal) && maxVal >= 0 && maxVal <= 20 && (!hasRealSig || maxVal >= sigVal));
 
                     if (!isAws && !isNmpnt && !isTideOnlyWind) {
                         if (hasRealSig && sigVal >= sigLimit) isAnyWaveDanger = true;
@@ -1153,19 +1135,18 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         let nmpntKey = localStorage.getItem("nmpnt_service_key") || DEFAULT_NMPNT_KEY;
         let khoaKey = localStorage.getItem("khoa_api_key") || DEFAULT_KHOA_KEY;
 
-        // KG_0024, KG_0102 완전 제거 / DT_0094, TW_0080, SF_007, DT_0028 추가 호출
         const results = await Promise.allSettled([
             fetchKmaApi("buoy", authKey),
             fetchKmaApi("warn", authKey),
             fetchKmaApi("aws", authKey),
-            fetchWithTimeout(`/api/nmpnt?serviceKey=${encodeURIComponent(nmpntKey)}&_t=${Date.now()}`, {}, 5000).then(r => r.json()),
-            fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=KG_0025&_t=${Date.now()}`, {}, 5500).then(r => r.json()),
-            fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=IE_0061&_t=${Date.now()}`, {}, 5500).then(r => r.json()),
-            fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=DT_0065&_t=${Date.now()}`, {}, 5500).then(r => r.json()),
-            fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=DT_0094&_t=${Date.now()}`, {}, 5500).then(r => r.json()),
-            fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=TW_0080&_t=${Date.now()}`, {}, 5500).then(r => r.json()),
-            fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=SF_007&_t=${Date.now()}`, {}, 5500).then(r => r.json()),
-            fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=DT_0028&_t=${Date.now()}`, {}, 5500).then(r => r.json())
+            fetchWithTimeout(`/api/nmpnt?serviceKey=${encodeURIComponent(nmpntKey)}&_t=${Date.now()}`, {}, 12000).then(r => r.json()),
+            fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=KG_0025&_t=${Date.now()}`, {}, 7000).then(r => r.json()),
+            fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=IE_0061&_t=${Date.now()}`, {}, 7000).then(r => r.json()),
+            fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=DT_0065&_t=${Date.now()}`, {}, 7000).then(r => r.json()),
+            fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=DT_0094&_t=${Date.now()}`, {}, 7000).then(r => r.json()),
+            fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=TW_0080&_t=${Date.now()}`, {}, 7000).then(r => r.json()),
+            fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=SF_007&_t=${Date.now()}`, {}, 7000).then(r => r.json()),
+            fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=DT_0028&_t=${Date.now()}`, {}, 7000).then(r => r.json())
         ]);
 
         const textBuoy = results[0].status === 'fulfilled' ? results[0].value : null;
@@ -1182,7 +1163,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
 
         let updatedCount = 0;
 
-        // 1. 기상청 해양기상부이, 파고부이(22500, 22481, 22449), 등표(959) 6시간 이력 및 최신치 파싱
+        // 1. 기상청 해양기상부이, 파고부이(22500, 22481, 22449), 등표(959) 동적 헤더 기반 정밀 파싱
         if (textBuoy) {
             const lines = textBuoy.split('\n');
             const targetBuoys = [
@@ -1198,13 +1179,31 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                 { id: '959',   key: '해수서파고' }
             ];
 
+            // 헤더(# TP TM STN ...)에서 컬럼 인덱스 동적 추출 (수온/파주기/GUST 오파싱 원천 차단)
+            let idxWh = 6, idxWd = 7, idxWs = 8, idxMaxWh = -1;
+            for (let rawL of lines) {
+                let l = rawL.trim();
+                if (l.startsWith('#') && l.includes('STN') && (l.includes('WH') || l.includes('WS'))) {
+                    let hCols = l.replace(/^#+\s*/, '').split(/\s+/);
+                    let fWh = hCols.findIndex(c => c === 'WH' || c === 'SIG_WH' || c === 'SWH');
+                    let fWd = hCols.findIndex(c => c === 'WD' || c === 'WDIR');
+                    let fWs = hCols.findIndex(c => c === 'WS' || c === 'WSPD');
+                    let fMax = hCols.findIndex(c => c === 'MAX_WH' || c === 'MWH' || c === 'WH_MAX');
+                    if (fWh >= 0) idxWh = fWh;
+                    if (fWd >= 0) idxWd = fWd;
+                    if (fWs >= 0) idxWs = fWs;
+                    if (fMax >= 0) idxMaxWh = fMax;
+                    break;
+                }
+            }
+
             let latestTsByKey = {};
 
             lines.forEach(line => {
                 line = line.trim();
                 if (!line || line.startsWith('#')) return;
                 const cols = line.includes(',') ? line.split(',').map(c => c.trim()) : line.split(/\s+/);
-                if (cols.length < 9) return;
+                if (cols.length < 7) return;
 
                 const tmStr = cols[1] || '';
                 const timeOnly = tmStr.length >= 12 ? `${tmStr.substring(8,10)}:${tmStr.substring(10,12)}` : '최신';
@@ -1212,36 +1211,16 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
 
                 targetBuoys.forEach(tb => {
                     if (stnId === tb.id) {
-                        // sea_obs.php 표준 컬럼: [0]TP [1]TM [2]STN [3]LAT [4]LON [5]WH(유의) [6]WD [7]WS [8]GUST [9]MAX_WH [10]PW(파주기)...
-                        // 구버전/등표 포맷 병행 안전 파싱: 유의파고는 cols[5] 또는 cols[6], 최대파고는 cols[9] 또는 cols[10] 중 유의파고 이상인 유효값 선택
-                        let c5 = parseFloat(cols[5]);
-                        let c6 = parseFloat(cols[6]);
-                        let c7 = parseFloat(cols[7]);
-                        let c8 = parseFloat(cols[8]);
-                        let c9 = cols.length >= 10 ? parseFloat(cols[9]) : NaN;
-                        let c10 = cols.length >= 11 ? parseFloat(cols[10]) : NaN;
-
-                        // 방위각(0~360)이 들어있는 컬럼 위치를 기준으로 풍향/풍속/파고 컬럼 자동 판별
-                        let rawWh = NaN, rawWd = NaN, rawWs = NaN, rawMaxWh = NaN;
-                        if (!isNaN(c7) && c7 >= 0 && c7 <= 360 && (c6 < 0 || c6 <= 20)) {
-                            // 표준 sea_obs.php: [5]WH, [6]파향/수온, [7]WD, [8]WS, [9]GUST, [10]MAX_WH (또는 [9]MAX_WH)
-                            rawWh = (!isNaN(c5) && c5 >= 0 && c5 <= 20) ? c5 : c6;
-                            rawWd = c7;
-                            rawWs = c8;
-                            // 최대파고는 유의파고(rawWh)보다 크거나 같아야 함 (GUST/수온/파주기 오파싱 원천 차단)
-                            if (!isNaN(c10) && c10 >= 0 && c10 <= 25 && (isNaN(rawWh) || c10 >= rawWh)) rawMaxWh = c10;
-                            else if (!isNaN(c9) && c9 >= 0 && c9 <= 25 && (isNaN(rawWh) || c9 >= rawWh) && c9 !== c8) rawMaxWh = c9;
-                        } else {
-                            rawWh = c6;
-                            rawWd = c7;
-                            rawWs = c8;
-                            if (!isNaN(c9) && c9 >= 0 && c9 <= 25 && (isNaN(rawWh) || c9 >= rawWh)) rawMaxWh = c9;
-                        }
+                        let rawWh = idxWh >= 0 && cols.length > idxWh ? parseFloat(cols[idxWh]) : NaN;
+                        let rawWd = idxWd >= 0 && cols.length > idxWd ? parseFloat(cols[idxWd]) : NaN;
+                        let rawWs = idxWs >= 0 && cols.length > idxWs ? parseFloat(cols[idxWs]) : NaN;
+                        let rawMaxWh = idxMaxWh >= 0 && cols.length > idxMaxWh ? parseFloat(cols[idxMaxWh]) : NaN;
 
                         let wVal = (!isNaN(rawWs) && rawWs >= 0 && rawWs < 50.0) ? rawWs.toFixed(1) : '-';
                         let dVal = (!isNaN(rawWd) && rawWd >= 0 && rawWd <= 360) ? degToDirection(rawWd) : '-';
-                        let whVal = (!isNaN(rawWh) && rawWh >= 0.0 && rawWh <= 15.0) ? rawWh.toFixed(1) : '-';
-                        let maxWhVal = (!isNaN(rawMaxWh) && rawMaxWh >= 0.0 && rawMaxWh <= 25.0 && (whVal === '-' || parseFloat(rawMaxWh) >= parseFloat(whVal))) ? rawMaxWh.toFixed(1) : '-';
+                        let whVal = (!isNaN(rawWh) && rawWh >= 0.0 && rawWh <= 12.0) ? rawWh.toFixed(1) : '-';
+                        // 최대파고는 유효 범위(0~18m) 및 유의파고 이상일 때만 인정
+                        let maxWhVal = (!isNaN(rawMaxWh) && rawMaxWh >= 0.0 && rawMaxWh <= 18.0 && (whVal === '-' || rawMaxWh >= parseFloat(whVal))) ? rawMaxWh.toFixed(1) : '-';
 
                         if (wVal !== '-' || whVal !== '-') {
                             if (!stationHistoryMap[tb.key]) stationHistoryMap[tb.key] = [];
@@ -1296,7 +1275,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                 const tmStr = cols[0] || '';
                 const timeOnly = tmStr.length >= 12 ? `${tmStr.substring(8,10)}:${tmStr.substring(10,12)}` : '최신';
 
-                // nph-aws2_min 표준 컬럼: [0]TM [1]STN [2]WD1 [3]WS1 [4]WDS [5]WSS(순간풍속) [6]WD10 [7]WS10 ...
                 const wd1 = parseFloat(cols[2]);
                 const ws1 = parseFloat(cols[3]);
                 const wss = cols.length >= 6 ? parseFloat(cols[5]) : -99; // 순간바람(GUST)
@@ -1305,7 +1283,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
 
                 const finalWs = (!isNaN(ws10) && ws10 >= 0 && ws10 < 100) ? ws10 : ws1;
                 const finalWd = (!isNaN(wd10) && wd10 >= 0 && wd10 <= 360) ? wd10 : wd1;
-                // 순간바람 유효성 체크 (결측 -99 제외, 평균풍속 이상)
                 let finalGust = (!isNaN(wss) && wss >= 0 && wss < 120) ? wss : NaN;
                 if (!isNaN(finalGust) && !isNaN(finalWs) && finalGust < finalWs) finalGust = finalWs;
 
@@ -1331,9 +1308,10 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             });
         }
 
-        // 3. 측위정보원 등대 (하조도등대 등 시간별 이력 누적 표출)
-        if (dataNmpnt && dataNmpnt.result && dataNmpnt.result.recordset) {
-            const records = Array.isArray(dataNmpnt.result.recordset) ? dataNmpnt.result.recordset : [dataNmpnt.result.recordset];
+        // 3. 측위정보원 등대 (다양한 JSON 구조 및 시간 필드 포괄 지원)
+        const nmpntRaw = dataNmpnt?.result?.recordset || dataNmpnt?.recordset || dataNmpnt?.response?.body?.items?.item || dataNmpnt?.items || null;
+        if (nmpntRaw) {
+            const records = Array.isArray(nmpntRaw) ? nmpntRaw : [nmpntRaw];
             const kstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
             const nowSortKey = kstNow.toISOString().replace(/\D/g, '').substring(0, 12);
             const nowTime = `${nowSortKey.substring(8,10)}:${nowSortKey.substring(10,12)}`;
@@ -1341,10 +1319,10 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             let latestNmpntTsByKey = {};
 
             records.forEach(item => {
-                const code = String(item.MMSI_CODE || item.OBS_CD || '').trim();
-                const name = String(item.MMSI_NM || item.OBS_NM || '').trim();
-                const ws = parseFloat(item.WIND_SPEED ?? item.WSPD);
-                const wd = parseFloat(item.WIND_DIRECT ?? item.WDIR);
+                const code = String(item.MMSI_CODE || item.OBS_CD || item.stnId || '').trim();
+                const name = String(item.MMSI_NM || item.OBS_NM || item.stnNm || '').trim();
+                const ws = parseFloat(item.WIND_SPEED ?? item.WSPD ?? item.ws);
+                const wd = parseFloat(item.WIND_DIRECT ?? item.WDIR ?? item.wd);
                 let tmStr = String(item.RECORD_TIME || item.OBS_TIME || item.TIME || item.REG_DATE || item.REG_DT || item.TM || '');
                 let digits = tmStr.replace(/\D/g, '');
                 let sortKey = digits.length >= 12 ? digits.substring(0, 12) : nowSortKey;
