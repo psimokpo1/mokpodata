@@ -26,8 +26,25 @@ let countdownIntervalId = null;
 let nextRefreshRemainingSec = 300;
 let latestRawWarnText = "기상청 특보 통보문을 수신 중입니다...";
 
-// 관측소별 시간대별 과거 이력 저장소
+// 관측소별 시간대별 과거 이력 저장소 (localStorage 영속화 지원)
 let stationHistoryMap = {};
+try {
+    const savedHist = localStorage.getItem('komsa_station_history_v1');
+    if (savedHist) stationHistoryMap = JSON.parse(savedHist);
+} catch (e) {
+    stationHistoryMap = {};
+}
+
+function saveStationHistoryCache() {
+    try {
+        for (let k in stationHistoryMap) {
+            if (Array.isArray(stationHistoryMap[k])) {
+                stationHistoryMap[k] = stationHistoryMap[k].filter(h => isWithinLast6Hours(h.sortKey));
+            }
+        }
+        localStorage.setItem('komsa_station_history_v1', JSON.stringify(stationHistoryMap));
+    } catch (e) {}
+}
 
 const DEFAULT_KMA_AUTHKEY = "s0C3VEw6ScOAt1RMOinDFQ";
 const DEFAULT_NMPNT_KEY = "A8ECE1B4-0A1E-43E9-A5D4-7D4D906FC401";
@@ -54,7 +71,8 @@ let latestBuoyData = {
     '진도파고':     { stnId: '22449',   type: 'wavebuoy', name: '진도 파고부이',       wind: null, windDir: null, sigWave: '-', maxWave: '-' },
     '해수서파고':   { stnId: '959',     type: 'beacon',   name: '해수서 등표',         wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
 
-    // [기상청 육상 AWS 15개 지점 - 평균풍속 + 순간바람(gust)]
+    // [기상청 육상 AWS 지점 - 평균풍속 + 순간바람(gust)]
+    '목포AWS':      { stnId: '165',     type: 'aws',      name: '목포 기상대(AWS)',    wind: '-', gust: '-', windDir: '-', sigWave: null, maxWave: null },
     '옥도':         { stnId: '308',     type: 'aws',      name: '옥도 AWS',            wind: '-', gust: '-', windDir: '-', sigWave: null, maxWave: null },
     '비금':         { stnId: '743',     type: 'aws',      name: '비금 AWS',            wind: '-', gust: '-', windDir: '-', sigWave: null, maxWave: null },
     '자은도':       { stnId: '714',     type: 'aws',      name: '자은도 AWS',          wind: '-', gust: '-', windDir: '-', sigWave: null, maxWave: null },
@@ -79,13 +97,12 @@ let latestBuoyData = {
     '하조도':       { stnId: '1079005', type: 'nmpnt',    name: '하조도등대(측위)',     wind: '-', windDir: '-', sigWave: null, maxWave: null },
     '계마항':       { stnId: '1079007', type: 'nmpnt',    name: '계마항등대(측위)',     wind: '-', windDir: '-', sigWave: null, maxWave: null },
 
-    // [국립해양조사원 해양관측부이 / 과학기지 / 조위·해무관측소] (KG_0024, KG_0102 완전 제거됨)
+    // [국립해양조사원 해양관측부이 / 과학기지 / 조위관측소] (KG_0024, KG_0102 완전 제거됨)
     '추자조사원':   { obsCode: 'KG_0025', type: 'khoa',   name: '추자부이(조사원)',     wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
     '가거초조사원': { obsCode: 'IE_0061', type: 'khoa',   name: '가거초기지(조사원)',   wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
     '향화도조위':   { obsCode: 'DT_0065', type: 'khoa',   name: '향화도조위(조사원)',   wind: '-', windDir: '-', sigWave: null, maxWave: null },
     '서거차조위':   { obsCode: 'DT_0094', type: 'khoa',   name: '서거차도조위(조사원)', wind: '-', windDir: '-', sigWave: null, maxWave: null },
     '우이도조사원': { obsCode: 'TW_0080', type: 'khoa',   name: '우이도관측소(조사원)', wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
-    '목포항해무':   { obsCode: 'SF_007',  type: 'khoa',   name: '목포항해무(조사원)',   wind: '-', windDir: '-', sigWave: null, maxWave: null },
     '진도조위':     { obsCode: 'DT_0028', type: 'khoa',   name: '진도조위(조사원)',     wind: '-', windDir: '-', sigWave: null, maxWave: null }
 };
 
@@ -261,7 +278,7 @@ function parseVesselControlCriteria(rawName, decision, route, notes, ports = '')
 
     // 1. 출항항 및 기항지·항로별 정밀 매칭 (체크리스트 6~20번 반영)
     if (r.startsWith("목포-") || p.includes("목포")) {
-        addSt('목포항해무');
+        addSt('목포AWS');
     }
 
     if (r.includes("진도") || p.includes("진도")) {
@@ -1087,7 +1104,7 @@ function parseWeatherWarnings(rawText) {
     }
 }
 
-async function fetchWithTimeout(url, options = {}, timeout = 7500) {
+async function fetchWithTimeout(url, options = {}, timeout = 8000) {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeout);
     try {
@@ -1103,17 +1120,20 @@ async function fetchWithTimeout(url, options = {}, timeout = 7500) {
 async function fetchKmaApi(type, authKey) {
     try {
         const url = `/api/kma?type=${type}&authKey=${encodeURIComponent(authKey)}&_t=${Date.now()}`;
-        const response = await fetchWithTimeout(url, {}, 7500);
+        const response = await fetchWithTimeout(url, {}, 8500);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         
+        const contentType = response.headers.get('content-type') || '';
         const buffer = await response.arrayBuffer();
         let text = "";
-        try {
-            const decoderEuc = new TextDecoder('euc-kr');
-            text = decoderEuc.decode(buffer);
-        } catch (decErr) {
-            const decoderUtf = new TextDecoder('utf-8');
-            text = decoderUtf.decode(buffer);
+        if (contentType.includes('utf-8')) {
+            text = new TextDecoder('utf-8').decode(buffer);
+        } else {
+            try {
+                text = new TextDecoder('euc-kr').decode(buffer);
+            } catch (decErr) {
+                text = new TextDecoder('utf-8').decode(buffer);
+            }
         }
         
         if (text && text.trim().length > 5 && !text.includes("FETCH_ERROR") && !text.includes("INVALID_")) {
@@ -1145,7 +1165,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=DT_0065&_t=${Date.now()}`, {}, 7000).then(r => r.json()),
             fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=DT_0094&_t=${Date.now()}`, {}, 7000).then(r => r.json()),
             fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=TW_0080&_t=${Date.now()}`, {}, 7000).then(r => r.json()),
-            fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=SF_007&_t=${Date.now()}`, {}, 7000).then(r => r.json()),
             fetchWithTimeout(`/api/khoa?serviceKey=${encodeURIComponent(khoaKey)}&obsCode=DT_0028&_t=${Date.now()}`, {}, 7000).then(r => r.json())
         ]);
 
@@ -1158,14 +1177,12 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         const dataKhoaHyanghwa = results[6].status === 'fulfilled' ? results[6].value : null;
         const dataKhoaSeogeocha = results[7].status === 'fulfilled' ? results[7].value : null;
         const dataKhoaUido = results[8].status === 'fulfilled' ? results[8].value : null;
-        const dataKhoaMokpoFog = results[9].status === 'fulfilled' ? results[9].value : null;
-        const dataKhoaJindo = results[10].status === 'fulfilled' ? results[10].value : null;
+        const dataKhoaJindo = results[9].status === 'fulfilled' ? results[9].value : null;
 
         let updatedCount = 0;
 
-        // 1. 기상청 해양기상부이, 파고부이(22500, 22481, 22449), 등표(959) 동적 헤더 기반 정밀 파싱
+        // 1. 기상청 해양기상부이 기간조회(kma_buoy.php) + 등표/파고부이(sea_obs.php) 분리 정밀 파싱
         if (textBuoy) {
-            const lines = textBuoy.split('\n');
             const targetBuoys = [
                 { id: '22183', key: '신안' },
                 { id: '22184', key: '추자도' },
@@ -1179,78 +1196,103 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                 { id: '959',   key: '해수서파고' }
             ];
 
-            // 헤더(# TP TM STN ...)에서 컬럼 인덱스 동적 추출 (수온/파주기/GUST 오파싱 원천 차단)
-            let idxWh = 6, idxWd = 7, idxWs = 8, idxMaxWh = -1;
-            for (let rawL of lines) {
-                let l = rawL.trim();
-                if (l.startsWith('#') && l.includes('STN') && (l.includes('WH') || l.includes('WS'))) {
-                    let hCols = l.replace(/^#+\s*/, '').split(/\s+/);
-                    let fWh = hCols.findIndex(c => c === 'WH' || c === 'SIG_WH' || c === 'SWH');
-                    let fWd = hCols.findIndex(c => c === 'WD' || c === 'WDIR');
-                    let fWs = hCols.findIndex(c => c === 'WS' || c === 'WSPD');
-                    let fMax = hCols.findIndex(c => c === 'MAX_WH' || c === 'MWH' || c === 'WH_MAX');
-                    if (fWh >= 0) idxWh = fWh;
-                    if (fWd >= 0) idxWd = fWd;
-                    if (fWs >= 0) idxWs = fWs;
-                    if (fMax >= 0) idxMaxWh = fMax;
-                    break;
-                }
-            }
-
             let latestTsByKey = {};
 
-            lines.forEach(line => {
-                line = line.trim();
-                if (!line || line.startsWith('#')) return;
-                const cols = line.includes(',') ? line.split(',').map(c => c.trim()) : line.split(/\s+/);
-                if (cols.length < 7) return;
+            const parseBuoySection = (sectionText, isKmaBuoyPeriod) => {
+                if (!sectionText) return;
+                const lines = sectionText.split('\n');
 
-                const tmStr = cols[1] || '';
-                const timeOnly = tmStr.length >= 12 ? `${tmStr.substring(8,10)}:${tmStr.substring(10,12)}` : '최신';
-                const stnId = cols[2];
+                // kma_buoy.php 기본 컬럼: [0]TM [1]STN [2]WD1 [3]WS1 [4]WS1_GST [5]WD10 [6]WS10 [7]WS10_GST [8]PA [9]HM [10]TA [11]TW [12]WH_MAX [13]WH_SIG [14]WH_AVE [15]WP [16]WO
+                // sea_obs.php 기본 컬럼: [0]TP [1]TM [2]STN [3]LAT [4]LON [5]WH [6]WD [7]WS [8]WT (최대파고 없음)
+                let idxTm = isKmaBuoyPeriod ? 0 : 1;
+                let idxStn = isKmaBuoyPeriod ? 1 : 2;
+                let idxWd = isKmaBuoyPeriod ? 5 : 6;
+                let idxWs = isKmaBuoyPeriod ? 6 : 7;
+                let idxWh = isKmaBuoyPeriod ? 13 : 5;
+                let idxMaxWh = isKmaBuoyPeriod ? 12 : -1;
 
-                targetBuoys.forEach(tb => {
-                    if (stnId === tb.id) {
-                        let rawWh = idxWh >= 0 && cols.length > idxWh ? parseFloat(cols[idxWh]) : NaN;
-                        let rawWd = idxWd >= 0 && cols.length > idxWd ? parseFloat(cols[idxWd]) : NaN;
-                        let rawWs = idxWs >= 0 && cols.length > idxWs ? parseFloat(cols[idxWs]) : NaN;
-                        let rawMaxWh = idxMaxWh >= 0 && cols.length > idxMaxWh ? parseFloat(cols[idxMaxWh]) : NaN;
+                for (let rawL of lines) {
+                    let l = rawL.trim();
+                    if (l.startsWith('#') && l.includes('STN')) {
+                        let hCols = l.replace(/^#+\s*/, '').split(/\s+/);
+                        let fTm = hCols.findIndex(c => c === 'TM' || c === 'YYMMDDHHMI');
+                        let fStn = hCols.findIndex(c => c === 'STN' || c === 'STN_ID');
+                        let fWd = hCols.findIndex(c => c === 'WD10' || c === 'WD' || c === 'WDIR');
+                        let fWs = hCols.findIndex(c => c === 'WS10' || c === 'WS' || c === 'WSPD');
+                        let fWh = hCols.findIndex(c => c === 'WH_SIG' || c === 'WH' || c === 'SIG_WH' || c === 'SWH');
+                        let fMax = hCols.findIndex(c => c === 'WH_MAX' || c === 'MAX_WH' || c === 'MWH');
 
-                        let wVal = (!isNaN(rawWs) && rawWs >= 0 && rawWs < 50.0) ? rawWs.toFixed(1) : '-';
-                        let dVal = (!isNaN(rawWd) && rawWd >= 0 && rawWd <= 360) ? degToDirection(rawWd) : '-';
-                        let whVal = (!isNaN(rawWh) && rawWh >= 0.0 && rawWh <= 12.0) ? rawWh.toFixed(1) : '-';
-                        // 최대파고는 유효 범위(0~18m) 및 유의파고 이상일 때만 인정
-                        let maxWhVal = (!isNaN(rawMaxWh) && rawMaxWh >= 0.0 && rawMaxWh <= 18.0 && (whVal === '-' || rawMaxWh >= parseFloat(whVal))) ? rawMaxWh.toFixed(1) : '-';
+                        if (fTm >= 0) idxTm = fTm;
+                        if (fStn >= 0) idxStn = fStn;
+                        if (fWd >= 0) idxWd = fWd;
+                        if (fWs >= 0) idxWs = fWs;
+                        if (fWh >= 0) idxWh = fWh;
+                        if (fMax >= 0) idxMaxWh = fMax;
+                        else idxMaxWh = -1; // 헤더에 MAX_WH가 없으면 수온 등을 오파싱하지 않도록 -1 고정
+                        break;
+                    }
+                }
 
-                        if (wVal !== '-' || whVal !== '-') {
-                            if (!stationHistoryMap[tb.key]) stationHistoryMap[tb.key] = [];
-                            let idx = stationHistoryMap[tb.key].findIndex(h => h.sortKey === tmStr);
-                            let entry = { sortKey: tmStr, time: timeOnly, wind: wVal, windDir: dVal, sigWave: whVal, maxWave: maxWhVal };
-                            if (idx >= 0) stationHistoryMap[tb.key][idx] = entry;
-                            else stationHistoryMap[tb.key].push(entry);
-                        }
+                lines.forEach(line => {
+                    line = line.trim();
+                    if (!line || line.startsWith('#')) return;
+                    const cols = line.includes(',') ? line.split(',').map(c => c.trim()) : line.split(/\s+/);
+                    if (cols.length <= Math.max(idxTm, idxStn)) return;
 
-                        if (!latestTsByKey[tb.key] || tmStr >= latestTsByKey[tb.key]) {
-                            latestTsByKey[tb.key] = tmStr;
-                            if (latestBuoyData[tb.key].wind !== null && wVal !== '-') {
-                                latestBuoyData[tb.key].wind = wVal;
-                                latestBuoyData[tb.key].windDir = dVal;
-                                updatedCount++;
+                    const tmStr = cols[idxTm] || '';
+                    const timeOnly = tmStr.length >= 12 ? `${tmStr.substring(8,10)}:${tmStr.substring(10,12)}` : '최신';
+                    const stnId = cols[idxStn];
+
+                    targetBuoys.forEach(tb => {
+                        if (stnId === tb.id) {
+                            let rawWh = idxWh >= 0 && cols.length > idxWh ? parseFloat(cols[idxWh]) : NaN;
+                            let rawWd = idxWd >= 0 && cols.length > idxWd ? parseFloat(cols[idxWd]) : NaN;
+                            let rawWs = idxWs >= 0 && cols.length > idxWs ? parseFloat(cols[idxWs]) : NaN;
+                            let rawMaxWh = idxMaxWh >= 0 && cols.length > idxMaxWh ? parseFloat(cols[idxMaxWh]) : NaN;
+
+                            let wVal = (!isNaN(rawWs) && rawWs >= 0 && rawWs < 50.0) ? rawWs.toFixed(1) : '-';
+                            let dVal = (!isNaN(rawWd) && rawWd >= 0 && rawWd <= 360) ? degToDirection(rawWd) : '-';
+                            let whVal = (!isNaN(rawWh) && rawWh >= 0.0 && rawWh <= 12.0) ? rawWh.toFixed(1) : '-';
+                            let maxWhVal = (!isNaN(rawMaxWh) && rawMaxWh >= 0.0 && rawMaxWh <= 18.0 && (whVal === '-' || rawMaxWh >= parseFloat(whVal))) ? rawMaxWh.toFixed(1) : '-';
+
+                            if (wVal !== '-' || whVal !== '-') {
+                                if (!stationHistoryMap[tb.key]) stationHistoryMap[tb.key] = [];
+                                let idx = stationHistoryMap[tb.key].findIndex(h => h.sortKey === tmStr);
+                                let entry = { sortKey: tmStr, time: timeOnly, wind: wVal, windDir: dVal, sigWave: whVal, maxWave: maxWhVal };
+                                if (idx >= 0) stationHistoryMap[tb.key][idx] = entry;
+                                else stationHistoryMap[tb.key].push(entry);
                             }
-                            if (whVal !== '-') {
-                                latestBuoyData[tb.key].sigWave = whVal;
-                                if (latestBuoyData[tb.key].wind === null || wVal === '-') updatedCount++;
-                            }
-                            if (maxWhVal !== '-') {
+
+                            if (!latestTsByKey[tb.key] || tmStr >= latestTsByKey[tb.key]) {
+                                latestTsByKey[tb.key] = tmStr;
+                                if (latestBuoyData[tb.key].wind !== null && wVal !== '-') {
+                                    latestBuoyData[tb.key].wind = wVal;
+                                    latestBuoyData[tb.key].windDir = dVal;
+                                    updatedCount++;
+                                }
+                                if (whVal !== '-') {
+                                    latestBuoyData[tb.key].sigWave = whVal;
+                                    if (latestBuoyData[tb.key].wind === null || wVal === '-') updatedCount++;
+                                }
                                 latestBuoyData[tb.key].maxWave = maxWhVal;
                             }
                         }
-                    }
+                    });
                 });
-            });
+            };
+
+            if (textBuoy.includes('===BUOY_PERIOD===')) {
+                const parts = textBuoy.split('===SEA_OBS===');
+                const buoyPart = parts[0].replace('===BUOY_PERIOD===', '');
+                const seaPart = parts[1] || '';
+                parseBuoySection(buoyPart, true);
+                parseBuoySection(seaPart, false);
+            } else {
+                parseBuoySection(textBuoy, false);
+            }
         }
 
-        // 2. 기상청 육상 AWS 15개 지점 6시간 이력 및 최신치(평균풍속 + 순간바람 GUST) 파싱
+        // 2. 기상청 육상 AWS 지점 6시간 이력 및 최신치(평균풍속 + 순간바람 GUST) 파싱
         if (textAws) {
             const awsLines = textAws.split('\n');
             const awsIdToKey = {};
@@ -1308,7 +1350,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             });
         }
 
-        // 3. 측위정보원 등대 (다양한 JSON 구조 및 시간 필드 포괄 지원)
+        // 3. 측위정보원 등대 (localStorage 누적 이력 지원)
         const nmpntRaw = dataNmpnt?.result?.recordset || dataNmpnt?.recordset || dataNmpnt?.response?.body?.items?.item || dataNmpnt?.items || null;
         if (nmpntRaw) {
             const records = Array.isArray(nmpntRaw) ? nmpntRaw : [nmpntRaw];
@@ -1358,7 +1400,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             });
         }
 
-        // 4. 국립해양조사원 관측소 파싱 (추자, 가거초, 향화도, 서거차도, 우이도, 목포항해무, 진도조위)
+        // 4. 국립해양조사원 관측소 파싱 (추자, 가거초, 향화도, 서거차도, 우이도, 진도조위)
         const parseKhoaStation = (resObj, targetKey) => {
             if (!resObj || !resObj.result || !resObj.result.data) return false;
             const kData = resObj.result.data;
@@ -1420,11 +1462,11 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         if (parseKhoaStation(dataKhoaHyanghwa, '향화도조위')) updatedCount++;
         if (parseKhoaStation(dataKhoaSeogeocha, '서거차조위')) updatedCount++;
         if (parseKhoaStation(dataKhoaUido, '우이도조사원')) updatedCount++;
-        if (parseKhoaStation(dataKhoaMokpoFog, '목포항해무')) updatedCount++;
         if (parseKhoaStation(dataKhoaJindo, '진도조위')) updatedCount++;
 
-        // 5. 특보 파싱
+        // 5. 특보 파싱 및 캐시 저장
         if (textWarn) parseWeatherWarnings(textWarn);
+        saveStationHistoryCache();
 
         if (updatedCount > 0) {
             if (recvEl) recvEl.innerText = `📡 [실시간] ${new Date().toLocaleTimeString()} (${updatedCount}개소 연동)`;
