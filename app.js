@@ -98,7 +98,7 @@ let latestBuoyData = {
     '하조도':       { stnId: '1079005', type: 'nmpnt',    name: '하조도등대(측위)',     wind: '-', windDir: '-', sigWave: null, maxWave: null },
     '계마항':       { stnId: '1079007', type: 'nmpnt',    name: '계마항등대(측위)',     wind: '-', windDir: '-', sigWave: null, maxWave: null },
 
-    // [국립해양조사원 해양관측부이 / 과학기지 / 조위관측소] (KG_0024, KG_0102 완전 제거됨)
+    // [국립해양조사원 해양관측부이 / 과학기지 / 조위관측소]
     '추자조사원':   { obsCode: 'KG_0025', type: 'khoa',   name: '추자부이(조사원)',     wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
     '가거초조사원': { obsCode: 'IE_0061', type: 'khoa',   name: '가거초기지(조사원)',   wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
     '향화도조위':   { obsCode: 'DT_0065', type: 'khoa',   name: '향화도조위(조사원)',   wind: '-', windDir: '-', sigWave: null, maxWave: null },
@@ -1008,7 +1008,7 @@ function renderOperationBoard() {
 }
 
 // ==========================================
-// 5. 기상특보 파싱 및 통신 엔진 (6시간 전체 이력 수집)
+// 5. 기상특보 파싱 및 통신 엔진 (AWS 2단계 분리: 즉시 스냅샷 + 백그라운드 최근 3시간 이력)
 // ==========================================
 function setSeaWarningByLatestFc(seaKey, alertType, fcTimeNum) {
     let prevFc = seaWarningTimestamps[seaKey] || 0;
@@ -1117,10 +1117,10 @@ async function fetchWithTimeout(url, options = {}, timeout = 8000) {
     }
 }
 
-async function fetchKmaApi(type, authKey) {
+async function fetchKmaApi(type, authKey, timeoutMs = 12000) {
     try {
         const url = `/api/kma?type=${type}&authKey=${encodeURIComponent(authKey)}&_t=${Date.now()}`;
-        const response = await fetchWithTimeout(url, {}, 12000);
+        const response = await fetchWithTimeout(url, {}, timeoutMs);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         
         const contentType = response.headers.get('content-type') || '';
@@ -1146,6 +1146,68 @@ async function fetchKmaApi(type, authKey) {
     }
 }
 
+// AWS 텍스트 파싱 헬퍼 (1단계 즉시 스냅샷 & 2단계 최근 3시간 이력 공용)
+function parseAwsTextData(textAws) {
+    if (!textAws) return 0;
+    const awsLines = textAws.split('\n');
+    const awsIdToKey = {};
+    for (let k in latestBuoyData) {
+        if (latestBuoyData[k].type === 'aws' && latestBuoyData[k].stnId) {
+            awsIdToKey[String(latestBuoyData[k].stnId)] = k;
+        }
+    }
+
+    let latestAwsTsByKey = {};
+    let count = 0;
+
+    awsLines.forEach(line => {
+        line = line.trim();
+        if (!line || line.startsWith('#')) return;
+        const cols = line.split(/[\s,]+/).filter(Boolean);
+        if (cols.length < 4) return;
+
+        const stnId = String(cols[1]);
+        const targetKey = awsIdToKey[stnId];
+        if (!targetKey) return;
+
+        const tmStr = cols[0] || '';
+        const timeOnly = tmStr.length >= 12 ? `${tmStr.substring(8,10)}:${tmStr.substring(10,12)}` : '최신';
+
+        const wd1 = parseFloat(cols[2]);
+        const ws1 = parseFloat(cols[3]);
+        const wss = cols.length >= 6 ? parseFloat(cols[5]) : -99; // 순간바람(GUST)
+        const wd10 = cols.length >= 8 ? parseFloat(cols[6]) : -99;
+        const ws10 = cols.length >= 8 ? parseFloat(cols[7]) : -99;
+
+        const finalWs = (!isNaN(ws10) && ws10 >= 0 && ws10 < 100) ? ws10 : ws1;
+        const finalWd = (!isNaN(wd10) && wd10 >= 0 && wd10 <= 360) ? wd10 : wd1;
+        let finalGust = (!isNaN(wss) && wss >= 0 && wss < 120) ? wss : NaN;
+        if (!isNaN(finalGust) && !isNaN(finalWs) && finalGust < finalWs) finalGust = finalWs;
+
+        if (!isNaN(finalWs) && finalWs >= 0 && finalWs < 100) {
+            const wStr = finalWs.toFixed(1);
+            const gStr = !isNaN(finalGust) ? finalGust.toFixed(1) : '-';
+            const dStr = (!isNaN(finalWd) && finalWd >= 0 && finalWd <= 360) ? degToDirection(finalWd) : '-';
+
+            if (!stationHistoryMap[targetKey]) stationHistoryMap[targetKey] = [];
+            let idx = stationHistoryMap[targetKey].findIndex(h => h.sortKey === tmStr);
+            let entry = { sortKey: tmStr, time: timeOnly, wind: wStr, gust: gStr, windDir: dStr, sigWave: null, maxWave: null };
+            if (idx >= 0) stationHistoryMap[targetKey][idx] = entry;
+            else stationHistoryMap[targetKey].push(entry);
+
+            if (!latestAwsTsByKey[targetKey] || tmStr >= latestAwsTsByKey[targetKey]) {
+                latestAwsTsByKey[targetKey] = tmStr;
+                latestBuoyData[targetKey].wind = wStr;
+                latestBuoyData[targetKey].gust = gStr;
+                latestBuoyData[targetKey].windDir = dStr;
+                count++;
+            }
+        }
+    });
+
+    return count;
+}
+
 window.fetchWeatherRealtime = async (isAuto = false) => {
     let authKey = localStorage.getItem("kma_apihub_authkey") || DEFAULT_KMA_AUTHKEY;
     const recvEl = document.getElementById('weather-last-updated');
@@ -1155,14 +1217,14 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         let nmpntKey = localStorage.getItem("nmpnt_service_key") || DEFAULT_NMPNT_KEY;
         let khoaKey = localStorage.getItem("khoa_api_key") || DEFAULT_KHOA_KEY;
 
-        // 측위정보원은 매 10분마다 갱신 (수동 새로고침 시 또는 10분 경과 시)
         const nowMs = Date.now();
         const shouldFetchNmpnt = (!isAuto) || (nowMs - lastNmpntFetchMs >= 10 * 60 * 1000);
 
+        // 1단계: 모바일 즉각 표출을 위해 AWS는 최신 스냅샷(aws_now)만 초고속 수신
         const results = await Promise.allSettled([
-            fetchKmaApi("buoy", authKey),
-            fetchKmaApi("warn", authKey),
-            fetchKmaApi("aws", authKey),
+            fetchKmaApi("buoy", authKey, 12000),
+            fetchKmaApi("warn", authKey, 8000),
+            fetchKmaApi("aws_now", authKey, 6000),
             shouldFetchNmpnt
                 ? fetchWithTimeout(`/api/nmpnt?serviceKey=${encodeURIComponent(nmpntKey)}&_t=${nowMs}`, {}, 12000).then(r => r.json())
                 : Promise.resolve(null),
@@ -1176,7 +1238,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
 
         const textBuoy = results[0].status === 'fulfilled' ? results[0].value : null;
         const textWarn = results[1].status === 'fulfilled' ? results[1].value : null;
-        const textAws = results[2].status === 'fulfilled' ? results[2].value : null;
+        const textAwsNow = results[2].status === 'fulfilled' ? results[2].value : null;
         const dataNmpnt = results[3].status === 'fulfilled' ? results[3].value : null;
         const dataKhoaChuja = results[4].status === 'fulfilled' ? results[4].value : null;
         const dataKhoaGageocho = results[5].status === 'fulfilled' ? results[5].value : null;
@@ -1202,7 +1264,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                 { id: '959',   key: '해수서파고' }
             ];
 
-            // 기존 캐시에 남아있던 파고부이 10분 단위 0.0 더미 이력 정리
             ['조도파고', '맹골수도파고', '진도파고'].forEach(wbKey => {
                 if (Array.isArray(stationHistoryMap[wbKey])) {
                     stationHistoryMap[wbKey] = stationHistoryMap[wbKey].filter(h => parseFloat(h.sigWave) > 0);
@@ -1211,11 +1272,9 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
 
             let latestTsByKey = {};
 
-            // A) kma_buoy2.php 파싱 (해양기상부이 6시간 이력 + 실제 최대파고 WH_MAX)
             const parseBuoy2Block = (blockText) => {
                 if (!blockText || blockText.includes('UNAUTHORIZED') || blockText.includes('DENIED') || blockText.includes('ERROR')) return;
                 const lines = blockText.split('\n');
-                // kma_buoy2.php 변수명 순서: TM(0) STN(1) WD1(2) WS1(3) WS1_GST(4) WD2(5) WS2(6) WS2_GST(7) PA(8) HM(9) TA(10) TW(11) WH_MAX(12) WH_SIG(13) WH_AVE(14) WP(15) WO(16)
                 let idxTm = 0, idxStn = 1, idxWd = 2, idxWs = 3, idxMaxWh = 12, idxSigWh = 13;
 
                 for (let rawL of lines) {
@@ -1250,7 +1309,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
 
                     targetBuoys.forEach(tb => {
                         if (stnId === tb.id) {
-                            // 파고부이(22500, 22481, 22449)는 매 정시 sea_obs.php에서 실제 파고를 수신하므로 buoy2의 10분 단위 0.0 더미 데이터 제외
                             if (latestBuoyData[tb.key] && latestBuoyData[tb.key].type === 'wavebuoy') return;
 
                             let rawWd = parseFloat(cols[idxWd]);
@@ -1291,7 +1349,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                 });
             };
 
-            // B) sea_obs.php 파싱 (파고부이 22500/22481/22449 정시 실제 파고, 등표 959 및 buoy2 미포함 지점)
             const parseSeaObsBlock = (blockText) => {
                 if (!blockText) return;
                 const lines = blockText.split('\n');
@@ -1351,62 +1408,9 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             }
         }
 
-        // 2. 기상청 육상 AWS 지점 6시간(10분 간격) 이력 및 최신치(평균풍속 + 순간바람 GUST) 파싱
-        if (textAws) {
-            const awsLines = textAws.split('\n');
-            const awsIdToKey = {};
-            for (let k in latestBuoyData) {
-                if (latestBuoyData[k].type === 'aws' && latestBuoyData[k].stnId) {
-                    awsIdToKey[String(latestBuoyData[k].stnId)] = k;
-                }
-            }
-
-            let latestAwsTsByKey = {};
-
-            awsLines.forEach(line => {
-                line = line.trim();
-                if (!line || line.startsWith('#')) return;
-                const cols = line.split(/[\s,]+/).filter(Boolean);
-                if (cols.length < 4) return;
-
-                const stnId = String(cols[1]);
-                const targetKey = awsIdToKey[stnId];
-                if (!targetKey) return;
-
-                const tmStr = cols[0] || '';
-                const timeOnly = tmStr.length >= 12 ? `${tmStr.substring(8,10)}:${tmStr.substring(10,12)}` : '최신';
-
-                const wd1 = parseFloat(cols[2]);
-                const ws1 = parseFloat(cols[3]);
-                const wss = cols.length >= 6 ? parseFloat(cols[5]) : -99; // 순간바람(GUST)
-                const wd10 = cols.length >= 8 ? parseFloat(cols[6]) : -99;
-                const ws10 = cols.length >= 8 ? parseFloat(cols[7]) : -99;
-
-                const finalWs = (!isNaN(ws10) && ws10 >= 0 && ws10 < 100) ? ws10 : ws1;
-                const finalWd = (!isNaN(wd10) && wd10 >= 0 && wd10 <= 360) ? wd10 : wd1;
-                let finalGust = (!isNaN(wss) && wss >= 0 && wss < 120) ? wss : NaN;
-                if (!isNaN(finalGust) && !isNaN(finalWs) && finalGust < finalWs) finalGust = finalWs;
-
-                if (!isNaN(finalWs) && finalWs >= 0 && finalWs < 100) {
-                    const wStr = finalWs.toFixed(1);
-                    const gStr = !isNaN(finalGust) ? finalGust.toFixed(1) : '-';
-                    const dStr = (!isNaN(finalWd) && finalWd >= 0 && finalWd <= 360) ? degToDirection(finalWd) : '-';
-
-                    if (!stationHistoryMap[targetKey]) stationHistoryMap[targetKey] = [];
-                    let idx = stationHistoryMap[targetKey].findIndex(h => h.sortKey === tmStr);
-                    let entry = { sortKey: tmStr, time: timeOnly, wind: wStr, gust: gStr, windDir: dStr, sigWave: null, maxWave: null };
-                    if (idx >= 0) stationHistoryMap[targetKey][idx] = entry;
-                    else stationHistoryMap[targetKey].push(entry);
-
-                    if (!latestAwsTsByKey[targetKey] || tmStr >= latestAwsTsByKey[targetKey]) {
-                        latestAwsTsByKey[targetKey] = tmStr;
-                        latestBuoyData[targetKey].wind = wStr;
-                        latestBuoyData[targetKey].gust = gStr;
-                        latestBuoyData[targetKey].windDir = dStr;
-                        updatedCount++;
-                    }
-                }
-            });
+        // 2. 1단계 AWS 최신 스냅샷 즉시 파싱 (모바일 즉각 렌더링)
+        if (textAwsNow) {
+            updatedCount += parseAwsTextData(textAwsNow);
         }
 
         // 3. 측위정보원 등대 (매 10분마다 수집 & 10분 단위 슬롯으로 누적)
@@ -1526,7 +1530,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         if (parseKhoaStation(dataKhoaUido, '우이도조사원')) updatedCount++;
         if (parseKhoaStation(dataKhoaJindo, '진도조위')) updatedCount++;
 
-        // 5. 특보 파싱 및 캐시 저장
+        // 5. 특보 파싱 및 캐시 저장 후 화면 1차 즉시 렌더링
         if (textWarn) parseWeatherWarnings(textWarn);
         saveStationHistoryCache();
 
@@ -1537,6 +1541,16 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             if (recvEl) recvEl.innerText = `⚠️ 수신된 기상 데이터 없음`;
         }
         renderOperationBoard();
+
+        // 6. 2단계(백그라운드): AWS 최근 3시간(10분 간격) 과거 이력만 조용히 수집하여 캐시에 병합
+        fetchKmaApi("aws", authKey, 12000).then(textAwsHist => {
+            if (textAwsHist) {
+                parseAwsTextData(textAwsHist);
+                saveStationHistoryCache();
+                renderOperationBoard();
+            }
+        }).catch(() => {});
+
     } catch (err) {
         console.error("수신 전체 실패:", err);
         if (recvEl) recvEl.innerText = `⚠️ 통신 차단 또는 오류`;
