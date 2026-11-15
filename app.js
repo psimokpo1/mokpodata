@@ -1202,6 +1202,13 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                 { id: '959',   key: '해수서파고' }
             ];
 
+            // 기존 캐시에 남아있던 파고부이 10분 단위 0.0 더미 이력 정리
+            ['조도파고', '맹골수도파고', '진도파고'].forEach(wbKey => {
+                if (Array.isArray(stationHistoryMap[wbKey])) {
+                    stationHistoryMap[wbKey] = stationHistoryMap[wbKey].filter(h => parseFloat(h.sigWave) > 0);
+                }
+            });
+
             let latestTsByKey = {};
 
             // A) kma_buoy2.php 파싱 (해양기상부이 6시간 이력 + 실제 최대파고 WH_MAX)
@@ -1243,6 +1250,9 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
 
                     targetBuoys.forEach(tb => {
                         if (stnId === tb.id) {
+                            // 파고부이(22500, 22481, 22449)는 매 정시 sea_obs.php에서 실제 파고를 수신하므로 buoy2의 10분 단위 0.0 더미 데이터 제외
+                            if (latestBuoyData[tb.key] && latestBuoyData[tb.key].type === 'wavebuoy') return;
+
                             let rawWd = parseFloat(cols[idxWd]);
                             let rawWs = parseFloat(cols[idxWs]);
                             let rawMaxWh = parseFloat(cols[idxMaxWh]);
@@ -1281,7 +1291,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                 });
             };
 
-            // B) sea_obs.php 파싱 (파고부이 22500/22481/22449, 등표 959 및 buoy2 미포함 지점 보완)
+            // B) sea_obs.php 파싱 (파고부이 22500/22481/22449 정시 실제 파고, 등표 959 및 buoy2 미포함 지점)
             const parseSeaObsBlock = (blockText) => {
                 if (!blockText) return;
                 const lines = blockText.split('\n');
@@ -1308,7 +1318,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                             if (wVal !== '-' || whVal !== '-') {
                                 if (!stationHistoryMap[tb.key]) stationHistoryMap[tb.key] = [];
                                 let idx = stationHistoryMap[tb.key].findIndex(h => h.sortKey === tmStr);
-                                // 이미 buoy2에서 최대파고가 채워진 항목은 덮어쓰지 않고 유지
                                 if (idx < 0) {
                                     stationHistoryMap[tb.key].push({ sortKey: tmStr, time: timeOnly, wind: wVal, windDir: dVal, sigWave: whVal, maxWave: '-' });
                                 }
