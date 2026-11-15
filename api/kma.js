@@ -1,4 +1,4 @@
-// api/kma.js (기상청 해양기상부이 kma_buoy2 + 파고부이/등표 sea_obs + AWS 즉시/3시간 분리 + 기상특보)
+// api/kma.js (기상청 해양기상부이 kma_buoy2 + 파고부이/등표 sea_obs + AWS 즉시/3시간 분리 + 기상특보 + 특보지도 이미지)
 export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -26,6 +26,27 @@ export default async function handler(req, res) {
     const tm1_3h = formatKst(kst3hAgo);
 
     try {
+        // 1. 기상청 날씨누리 최신 특보 발효현황 지도 이미지 프록시
+        if (type === 'warn_img') {
+            const imgCandidates = [
+                `https://www.weather.go.kr/w/repositary/xml/wrn/img/wrn_now_data.png?_t=${nowUtc}`,
+                `https://www.weather.go.kr/w/repositary/xml/wrn/img/KOR_wrn_now.png?_t=${nowUtc}`
+            ];
+            for (const imgUrl of imgCandidates) {
+                try {
+                    const imgRes = await fetch(imgUrl, { headers: { 'User-Agent': 'Mozilla/5.0' }, cache: 'no-store' });
+                    if (imgRes.ok) {
+                        const buf = Buffer.from(await imgRes.arrayBuffer());
+                        res.setHeader('Content-Type', imgRes.headers.get('content-type') || 'image/png');
+                        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+                        return res.status(200).send(buf);
+                    }
+                } catch (e) {}
+            }
+            return res.status(404).end();
+        }
+
+        // 2. 해양기상부이(kma_buoy2) + 파고부이/등표(sea_obs) 기간조회
         if (type === 'buoy') {
             const buoy2Url = `https://apihub.kma.go.kr/api/typ01/url/kma_buoy2.php?tm1=${tm1_6h}&tm2=${tm2}&stn=0&help=1&authKey=${cleanKey}`;
             const seaObsUrl = `https://apihub.kma.go.kr/api/typ01/url/sea_obs.php?tm1=${tm1_6h}&tm2=${tm2}&stn=0&help=0&authKey=${cleanKey}`;
@@ -54,12 +75,11 @@ export default async function handler(req, res) {
             return res.status(200).send(combined);
         }
 
+        // 3. AWS(즉시 스냅샷 / 최근 3시간 이력) 및 기상특보 전문
         let targetUrl = '';
         if (type === 'aws_now') {
-            // 1단계: 모바일 즉각 표출용 최신 1시각 스냅샷 (초고속 응답)
             targetUrl = `https://apihub.kma.go.kr/api/typ01/cgi-bin/url/nph-aws2_min?stn=0&disp=0&help=0&authKey=${cleanKey}`;
         } else if (type === 'aws') {
-            // 2단계: 백그라운드 이력용 최근 3시간(10분 간격) 경량 조회
             targetUrl = `https://apihub.kma.go.kr/api/typ01/cgi-bin/url/nph-aws2_min?tm1=${tm1_3h}&tm2=${tm2}&stn=0&itv=10&disp=0&help=0&authKey=${cleanKey}`;
         } else if (type === 'warn') {
             targetUrl = `https://apihub.kma.go.kr/api/typ01/url/wrn_now_data.php?fe=f&tm=&disp=0&help=0&authKey=${cleanKey}`;
