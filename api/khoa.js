@@ -1,4 +1,4 @@
-// api/khoa.js (국립해양조사원 실시간 및 과거 이력 rawItems 완벽 지원)
+// api/khoa.js (국립해양조사원 조위 DT_, 해양관측 TW_, 해무 SF_ 실시간 및 과거 이력 rawItems 완벽 지원)
 export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -15,10 +15,17 @@ export default async function handler(req, res) {
     const kstNow = new Date(Date.now() + 9 * 60 * 60 * 1000);
     const todayStr = kstNow.toISOString().slice(0, 10).replace(/-/g, '');
 
-    const isTideStation = cleanObs.startsWith('DT_');
-    const url = isTideStation
-        ? `https://apis.data.go.kr/1192136/surveyWind/GetSurveyWindApiService?serviceKey=${cleanKey}&obsCode=${cleanObs}&reqDate=${todayStr}&type=json&pageNo=1&numOfRows=24`
-        : `https://apis.data.go.kr/1192136/twRecent/GetTWRecentApiService?serviceKey=${cleanKey}&obsCode=${cleanObs}&reqDate=${todayStr}&type=json&pageNo=1&numOfRows=24`;
+    let url = '';
+    if (cleanObs.startsWith('DT_')) {
+        // 조위관측소 기상(풍향/풍속) 조회 (향화도 DT_0065, 서거차도 DT_0094, 진도 DT_0028 등)
+        url = `https://apis.data.go.kr/1192136/surveyWind/GetSurveyWindApiService?serviceKey=${cleanKey}&obsCode=${cleanObs}&reqDate=${todayStr}&type=json&pageNo=1&numOfRows=100`;
+    } else if (cleanObs.startsWith('SF_')) {
+        // 해무관측소 최신 조회 (목포항 SF_007 등)
+        url = `https://apis.data.go.kr/1192136/sfRecent/GetSFRecentApiService?serviceKey=${cleanKey}&obsCode=${cleanObs}&reqDate=${todayStr}&type=json&pageNo=1&numOfRows=100`;
+    } else {
+        // 해양관측부이/기지 최신 조회 (추자 KG_0025, 가거초 IE_0061, 우이도 TW_0080 등)
+        url = `https://apis.data.go.kr/1192136/twRecent/GetTWRecentApiService?serviceKey=${cleanKey}&obsCode=${cleanObs}&reqDate=${todayStr}&type=json&pageNo=1&numOfRows=100`;
+    }
 
     try {
         const response = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, cache: 'no-store' });
