@@ -1008,7 +1008,7 @@ function renderOperationBoard() {
 }
 
 // ==========================================
-// 5. 기상특보 파싱 및 통신 엔진 (AWS 2단계 분리: 즉시 스냅샷 + 백그라운드 최근 3시간 이력)
+// 5. 기상특보 파싱 및 통신 엔진 (AWS 2단계 분리 + 날씨누리 스타일 특보 모달)
 // ==========================================
 function setSeaWarningByLatestFc(seaKey, alertType, fcTimeNum) {
     let prevFc = seaWarningTimestamps[seaKey] || 0;
@@ -1016,6 +1016,34 @@ function setSeaWarningByLatestFc(seaKey, alertType, fcTimeNum) {
         activeSeaWarnings[seaKey] = alertType;
         seaWarningTimestamps[seaKey] = fcTimeNum;
     }
+}
+
+function parseKmaWarnRecords(rawText) {
+    if (!rawText) return [];
+    const lines = rawText.split('\n');
+    const records = [];
+
+    lines.forEach(line => {
+        const l = line.trim();
+        if (!l || l.startsWith('#')) return;
+        const cols = l.split(',').map(c => c.trim());
+        // wrn_now_data.php 컬럼: [0]REG_UP [1]REG_UP_KO [2]REG_ID [3]REG_KO [4]TM_FC [5]TM_EF [6]WRN [7]LVL [8]CMD [9]ED_TM
+        if (cols.length >= 8) {
+            const cmd = cols[8] || '';
+            if (cmd.includes('해제') || cmd === '3') return;
+            records.push({
+                regUpKo: cols[1] || '',
+                regId: cols[2] || '',
+                regKo: cols[3] || '',
+                tmFc: cols[4] || '',
+                tmEf: cols[5] || '',
+                wrn: cols[6] || '',
+                lvl: cols[7] || '',
+                cmd: cmd
+            });
+        }
+    });
+    return records;
 }
 
 function parseWeatherWarnings(rawText) {
@@ -1029,79 +1057,158 @@ function parseWeatherWarnings(rawText) {
 
     const nowMs = Date.now();
 
+    // 1) wrn_now_data.php CSV 형식 파싱 우선 처리
+    const csvRecords = parseKmaWarnRecords(rawText);
+    if (csvRecords.length > 0) {
+        csvRecords.forEach(rec => {
+            const regKo = rec.regKo.replace(/\s/g, '');
+            const wrn = rec.wrn.replace(/\s/g, '');
+            const lvl = rec.lvl.replace(/\s/g, '');
+            const cmd = rec.cmd.replace(/\s/g, '');
+            const tmEfStr = rec.tmEf.replace(/\D/g, '');
+            const fcTimeNum = parseInt(rec.tmFc.replace(/\D/g, '') || '0', 10) || 0;
+
+            if (!wrn.includes('풍랑') && !wrn.includes('해상')) return;
+
+            let tmEfMs = 0;
+            let efHourStr = "15:00";
+            if (tmEfStr.length >= 10) {
+                let y = parseInt(tmEfStr.substring(0, 4), 10);
+                let m = parseInt(tmEfStr.substring(4, 6), 10) - 1;
+                let d = parseInt(tmEfStr.substring(6, 8), 10);
+                let h = parseInt(tmEfStr.substring(8, 10), 10);
+                let min = tmEfStr.length >= 12 ? parseInt(tmEfStr.substring(10, 12), 10) : 0;
+                tmEfMs = new Date(y, m, d, h, min, 0).getTime();
+                efHourStr = `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}`;
+            }
+
+            let alertType = '풍랑예비특보';
+            let isPurePreWarning = lvl.includes('예비') || cmd === '2' || wrn.includes('예비') || regKo.includes('예비');
+
+            if (isPurePreWarning) alertType = '풍랑예비특보';
+            else {
+                let isGyeongbo = lvl.includes('경보');
+                let baseName = isGyeongbo ? '풍랑경보' : '풍랑주의보';
+                if (tmEfMs > 0 && nowMs < tmEfMs) alertType = `${baseName}(발효예정 ${efHourStr})`;
+                else if (tmEfMs > 0 && nowMs >= tmEfMs) alertType = `${baseName}(발효중)`;
+                else alertType = '풍랑예비특보';
+            }
+
+            if (regKo.includes('전남북부')) setSeaWarningByLatestFc('서해남부앞바다(전남북부)', alertType, fcTimeNum);
+            else if (regKo.includes('전남중부')) setSeaWarningByLatestFc('서해남부앞바다(전남중부)', alertType, fcTimeNum);
+            else if (regKo.includes('전남남부')) setSeaWarningByLatestFc('서해남부앞바다(전남남부)', alertType, fcTimeNum);
+            else if (regKo.includes('북쪽안쪽먼바다') || (regKo.includes('서해남부') && regKo.includes('북쪽') && regKo.includes('먼바다'))) setSeaWarningByLatestFc('서해남부북쪽안쪽먼바다', alertType, fcTimeNum);
+            else if (regKo.includes('남쪽안쪽먼바다') || (regKo.includes('서해남부') && regKo.includes('남쪽') && regKo.includes('먼바다'))) setSeaWarningByLatestFc('서해남부남쪽안쪽먼바다', alertType, fcTimeNum);
+            else if (regKo.includes('남쪽바깥먼바다')) setSeaWarningByLatestFc('서해남부남쪽안쪽먼바다', alertType, fcTimeNum);
+            else if (regKo.includes('남해서부서쪽먼바다') || (regKo.includes('남해서부') && regKo.includes('서쪽'))) setSeaWarningByLatestFc('남해서부서쪽먼바다', alertType, fcTimeNum);
+            else if (regKo.includes('제주도북부앞바다') || (regKo.includes('제주도') && regKo.includes('북부앞'))) setSeaWarningByLatestFc('제주도북부앞바다', alertType, fcTimeNum);
+        });
+        return;
+    }
+
+    // 2) JSON / 일반 텍스트 폴백
     try {
         let data = JSON.parse(rawText);
         let items = Array.isArray(data) ? data : (data.items || data.result || []);
+        items.forEach(item => {
+            let regKo = String(item.REG_KO || item.REG_NAME || '').replace(/\s/g, '');
+            let wrn = String(item.WRN || '').replace(/\s/g, '');
+            let lvl = String(item.LVL || '').replace(/\s/g, '');
+            let cmd = String(item.CMD || '').replace(/\s/g, '');
+            let fcTimeNum = parseInt(String(item.TM_FC || '0').replace(/\D/g, ''), 10) || 0;
+            if (cmd.includes('해제') || cmd === '3') return;
+            if (!wrn.includes('풍랑') && !wrn.includes('해상')) return;
 
-        if (items.length > 0) {
-            items.forEach(item => {
-                let regKo = String(item.REG_KO || item.REG_NAME || '').replace(/\s/g, '');
-                let wrn = String(item.WRN || '').replace(/\s/g, '');
-                let lvl = String(item.LVL || '').replace(/\s/g, '');
-                let cmd = String(item.CMD || '').replace(/\s/g, '');
-                let tmEfStr = String(item.TM_EF || '').trim().replace(/\D/g, '');
-                let tmFcStr = String(item.TM_FC || '0').trim().replace(/\D/g, '');
-                let fcTimeNum = parseInt(tmFcStr, 10) || 0;
+            let alertType = lvl.includes('예비') ? '풍랑예비특보' : (lvl.includes('경보') ? '풍랑경보(발효중)' : '풍랑주의보(발효중)');
+            if (regKo.includes('전남북부')) setSeaWarningByLatestFc('서해남부앞바다(전남북부)', alertType, fcTimeNum);
+            else if (regKo.includes('전남중부')) setSeaWarningByLatestFc('서해남부앞바다(전남중부)', alertType, fcTimeNum);
+            else if (regKo.includes('전남남부')) setSeaWarningByLatestFc('서해남부앞바다(전남남부)', alertType, fcTimeNum);
+            else if (regKo.includes('북쪽안쪽먼바다')) setSeaWarningByLatestFc('서해남부북쪽안쪽먼바다', alertType, fcTimeNum);
+            else if (regKo.includes('남쪽안쪽먼바다')) setSeaWarningByLatestFc('서해남부남쪽안쪽먼바다', alertType, fcTimeNum);
+            else if (regKo.includes('남해서부서쪽먼바다')) setSeaWarningByLatestFc('남해서부서쪽먼바다', alertType, fcTimeNum);
+            else if (regKo.includes('제주도북부앞바다')) setSeaWarningByLatestFc('제주도북부앞바다', alertType, fcTimeNum);
+        });
+    } catch (e) {}
+}
 
-                if (cmd.includes('해제') || cmd === '3') return;
-                if (!wrn.includes('풍랑') && !wrn.includes('해상')) return;
+function formatWarnTimestampKo(tmStr) {
+    const digits = String(tmStr || '').replace(/\D/g, '');
+    if (digits.length < 12) return '-';
+    const yyyy = digits.substring(0, 4);
+    const mm = digits.substring(4, 6);
+    const dd = digits.substring(6, 8);
+    const hh = digits.substring(8, 10);
+    const min = digits.substring(10, 12);
+    const dateObj = new Date(Number(yyyy), Number(mm) - 1, Number(dd));
+    const days = ['일', '월', '화', '수', '목', '금', '토'];
+    const dayName = days[dateObj.getDay()] || '';
+    return `${yyyy}년 ${mm}월 ${dd}일(${dayName}) ${hh}:${min}`;
+}
 
-                let tmEfMs = 0;
-                let efHourStr = "15:00";
-                if (tmEfStr.length >= 10) {
-                    let y = parseInt(tmEfStr.substring(0, 4), 10);
-                    let m = parseInt(tmEfStr.substring(4, 6), 10) - 1;
-                    let d = parseInt(tmEfStr.substring(6, 8), 10);
-                    let h = parseInt(tmEfStr.substring(8, 10), 10);
-                    let min = tmEfStr.length >= 12 ? parseInt(tmEfStr.substring(10, 12), 10) : 0;
-                    tmEfMs = new Date(y, m, d, h, min, 0).getTime();
-                    efHourStr = `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}`;
-                }
-
-                let alertType = '풍랑예비특보';
-                let isPurePreWarning = lvl.includes('예비') || cmd === '2' || wrn.includes('예비') || regKo.includes('예비');
-
-                if (isPurePreWarning) alertType = '풍랑예비특보';
-                else {
-                    let isGyeongbo = lvl.includes('경보');
-                    let baseName = isGyeongbo ? '풍랑경보' : '풍랑주의보';
-                    if (tmEfMs > 0 && nowMs < tmEfMs) alertType = `${baseName}(발효예정 ${efHourStr})`;
-                    else if (tmEfMs > 0 && nowMs >= tmEfMs) alertType = `${baseName}(발효중)`;
-                    else alertType = '풍랑예비특보';
-                }
-
-                if (regKo.includes('전남북부')) setSeaWarningByLatestFc('서해남부앞바다(전남북부)', alertType, fcTimeNum);
-                else if (regKo.includes('전남중부')) setSeaWarningByLatestFc('서해남부앞바다(전남중부)', alertType, fcTimeNum);
-                else if (regKo.includes('전남남부')) setSeaWarningByLatestFc('서해남부앞바다(전남남부)', alertType, fcTimeNum);
-                else if (regKo.includes('북쪽안쪽먼바다') || (regKo.includes('서해남부') && regKo.includes('북쪽') && regKo.includes('먼바다'))) setSeaWarningByLatestFc('서해남부북쪽안쪽먼바다', alertType, fcTimeNum);
-                else if (regKo.includes('남쪽안쪽먼바다') || (regKo.includes('서해남부') && regKo.includes('남쪽') && regKo.includes('먼바다'))) setSeaWarningByLatestFc('서해남부남쪽안쪽먼바다', alertType, fcTimeNum);
-                else if (regKo.includes('남쪽바깥먼바다')) setSeaWarningByLatestFc('서해남부남쪽안쪽먼바다', alertType, fcTimeNum);
-                else if (regKo.includes('남해서부서쪽먼바다') || (regKo.includes('남해서부') && regKo.includes('서쪽'))) setSeaWarningByLatestFc('남해서부서쪽먼바다', alertType, fcTimeNum);
-                else if (regKo.includes('제주도북부앞바다') || (regKo.includes('제주도') && regKo.includes('북부앞'))) setSeaWarningByLatestFc('제주도북부앞바다', alertType, fcTimeNum);
-            });
-            return;
-        }
-    } catch (e) {
-        let text = rawText.replace(/\r/g, '');
-        let wMatch = text.match(/o\s*풍랑주의보[^\n:]*:\s*([\s\S]*?)(?=\n\s*o|\n\s*\(\d\)|\n\s*<|$)/i);
-        let wBlock = wMatch ? wMatch[1].replace(/\s/g, '') : '';
-        let pMatch = text.match(/o\s*(?:풍랑)?예비특보[^\n:]*:\s*([\s\S]*?)(?=\n\s*o|\n\s*\(\d\)|\n\s*<|$)/i);
-        let pBlock = pMatch ? pMatch[1].replace(/\s/g, '') : '';
-
-        const matchBlock = (block, alertType) => {
-            if (!block) return;
-            if (block.includes('전남북부')) activeSeaWarnings['서해남부앞바다(전남북부)'] = alertType;
-            if (block.includes('전남중부')) activeSeaWarnings['서해남부앞바다(전남중부)'] = alertType;
-            if (block.includes('전남남부')) activeSeaWarnings['서해남부앞바다(전남남부)'] = alertType;
-            if (block.includes('서해남부북쪽안쪽먼바다')) activeSeaWarnings['서해남부북쪽안쪽먼바다'] = alertType;
-            if (block.includes('서해남부남쪽안쪽먼바다')) activeSeaWarnings['서해남부남쪽안쪽먼바다'] = alertType;
-            if (block.includes('남해서부서쪽먼바다')) activeSeaWarnings['남해서부서쪽먼바다'] = alertType;
-            if (block.includes('제주도북부앞바다')) activeSeaWarnings['제주도북부앞바다'] = alertType;
-        };
-
-        matchBlock(wBlock, '풍랑주의보(발효예정 15:00)');
-        matchBlock(pBlock, '풍랑예비특보');
+function buildWeatherNuriSummaryHtml(rawText) {
+    const records = parseKmaWarnRecords(rawText);
+    if (records.length === 0) {
+        return `<div style="padding:20px; text-align:center; color:#64748B;">현재 발효 중인 기상특보가 없거나 통보문을 수신 중입니다.</div>`;
     }
+
+    let latestFc = '';
+    let latestEf = '';
+    records.forEach(r => {
+        if (r.tmFc > latestFc) latestFc = r.tmFc;
+        if (r.tmEf > latestEf) latestEf = r.tmEf;
+    });
+
+    const normalGroups = {};
+    const pyungsuList = [];
+    const yeonanList = [];
+
+    records.forEach(r => {
+        const isPre = r.lvl.includes('예비') || r.cmd.includes('예비') || r.cmd === '2';
+        const title = isPre ? `${r.wrn}예비특보` : `${r.wrn}${r.lvl}`;
+        const areaFull = (r.regUpKo && !r.regKo.includes(r.regUpKo))
+            ? `${r.regUpKo}(${r.regKo})`
+            : r.regKo;
+
+        if (r.regKo.includes('평수구역')) {
+            pyungsuList.push(`o ${r.regKo} ${title} 발표`);
+        } else if (r.regKo.includes('연안바다')) {
+            yeonanList.push(`o ${r.regKo} ${title} 발표`);
+        } else {
+            if (!normalGroups[title]) normalGroups[title] = [];
+            if (!normalGroups[title].includes(areaFull)) {
+                normalGroups[title].push(areaFull);
+            }
+        }
+    });
+
+    let bodyLinesHtml = '';
+    Object.keys(normalGroups).forEach(title => {
+        bodyLinesHtml += `<div style="margin-bottom:10px; line-height:1.6;"><strong>o ${title}</strong> : ${normalGroups[title].join(', ')}</div>`;
+    });
+
+    if (pyungsuList.length > 0) {
+        bodyLinesHtml += `<div style="margin-top:14px; margin-bottom:4px; font-weight:bold; color:#0F172A;">&lt;특정관리해역 평수구역 특보사항&gt;</div>`;
+        pyungsuList.forEach(txt => {
+            bodyLinesHtml += `<div style="line-height:1.6; color:#334155;">${txt}</div>`;
+        });
+    }
+
+    if (yeonanList.length > 0) {
+        bodyLinesHtml += `<div style="margin-top:14px; margin-bottom:4px; font-weight:bold; color:#0F172A;">&lt;특정관리해역 연안바다 특보사항&gt;</div>`;
+        yeonanList.forEach(txt => {
+            bodyLinesHtml += `<div style="line-height:1.6; color:#334155;">${txt}</div>`;
+        });
+    }
+
+    return `
+        <div style="font-size:13px; color:#1E293B; margin-bottom:10px; padding-bottom:8px; border-bottom:1px solid #E2E8F0;">
+            <div><strong>발표시각</strong> : ${formatWarnTimestampKo(latestFc)}</div>
+            <div style="margin-top:3px;"><strong>발효시각</strong> : ${formatWarnTimestampKo(latestEf)} 이후</div>
+        </div>
+        <div style="background:#FFFFFF; border:1px solid #CBD5E1; border-radius:6px; padding:14px; max-height:310px; overflow-y:auto; font-size:13.5px; color:#1E293B;">
+            ${bodyLinesHtml || '<div style="color:#64748B;">발효 중인 특보 내역이 없습니다.</div>'}
+        </div>
+    `;
 }
 
 async function fetchWithTimeout(url, options = {}, timeout = 8000) {
@@ -2394,7 +2501,51 @@ window.openApiSettingModal = () => {
 };
 
 window.closeApiSettingModal = () => { document.getElementById('api-modal').style.display = 'none'; };
-window.openRawWarnModal = () => { document.getElementById('raw-warn-text-area').value = latestRawWarnText; document.getElementById('raw-warn-modal').style.display = 'flex'; };
+
+window.openRawWarnModal = () => {
+    const modal = document.getElementById('raw-warn-modal');
+    if (!modal) return;
+
+    const summaryHtml = buildWeatherNuriSummaryHtml(latestRawWarnText);
+    const mapImgUrl = `/api/kma?type=warn_img&_t=${Date.now()}`;
+
+    modal.innerHTML = `
+        <div style="background:#fff; width:920px; max-width:96vw; max-height:90vh; border-radius:12px; box-shadow:0 12px 30px rgba(0,0,0,0.3); display:flex; flex-direction:column; overflow:hidden;">
+            <div style="padding:14px 20px; background:#1E293B; color:#fff; display:flex; justify-content:space-between; align-items:center;">
+                <h3 style="margin:0; font-size:16px;">📢 기상특보 종합 현황 (기상청 날씨누리 연동)</h3>
+                <button onclick="closeRawWarnModal()" style="background:none; border:none; color:#fff; font-size:20px; cursor:pointer; font-weight:bold;">✕</button>
+            </div>
+            <div style="padding:18px; overflow-y:auto; flex:1; background:#F8FAFC;">
+                <div style="display:flex; flex-wrap:wrap; gap:18px; align-items:flex-start;">
+                    <!-- 좌측: 기상특보 해역지도 -->
+                    <div style="flex:1 1 320px; background:#fff; border:1px solid #CBD5E1; border-radius:8px; padding:10px; text-align:center;">
+                        <div style="font-size:13px; font-weight:bold; color:#0F172A; margin-bottom:8px;">🗺️ 특보 발효현황 해역도</div>
+                        <img src="${mapImgUrl}"
+                             onerror="this.onerror=null; this.src='기상특보 해역지도.png';"
+                             alt="기상특보 발효현황 지도"
+                             style="width:100%; max-width:380px; height:auto; border-radius:6px; border:1px solid #E2E8F0;">
+                    </div>
+                    <!-- 우측: 특보 발효현황 & 특보 내용 -->
+                    <div style="flex:1.4 1 400px; background:#fff; border:1px solid #CBD5E1; border-radius:8px; padding:14px;">
+                        <div style="font-size:14px; font-weight:bold; color:#0F172A; margin-bottom:8px;">▪ 특보 발효현황 및 특보 내용</div>
+                        ${summaryHtml}
+                    </div>
+                </div>
+
+                <!-- 하단: 접이식 원본 전문 확인 -->
+                <details style="margin-top:14px; background:#fff; border:1px solid #CBD5E1; border-radius:8px; padding:10px 14px;">
+                    <summary style="cursor:pointer; font-size:12.5px; font-weight:bold; color:#475569;">📄 기상청 API 원본 전문 보기 (클릭 시 펼침)</summary>
+                    <textarea readonly style="width:100%; height:160px; margin-top:8px; font-family:monospace; font-size:11.5px; border:1px solid #E2E8F0; border-radius:6px; padding:8px; background:#F1F5F9; color:#334155;">${latestRawWarnText || ''}</textarea>
+                </details>
+            </div>
+            <div style="padding:12px 20px; background:#E2E8F0; text-align:right;">
+                <button onclick="closeRawWarnModal()" style="padding:7px 18px; background:#334155; color:#fff; border:none; border-radius:6px; cursor:pointer; font-size:13px; font-weight:bold;">닫기</button>
+            </div>
+        </div>
+    `;
+    modal.style.display = 'flex';
+};
+
 window.closeRawWarnModal = () => { document.getElementById('raw-warn-modal').style.display = 'none'; };
 
 window.toggleManualWarning = (seaName, isChecked) => {
