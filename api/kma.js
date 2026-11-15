@@ -1,4 +1,4 @@
-// api/kma.js (기상청 해양기상부이/등표/파고부이, AWS 전체, 기상특보 - 최근 6시간 이력 전체 조회 지원)
+// api/kma.js (기상청 해양기상부이 기간조회 kma_buoy2.php + 파고부이/등표 sea_obs.php + AWS 10분간격 6시간 이력 + 기상특보)
 export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -23,20 +23,44 @@ export default async function handler(req, res) {
     const tm2 = formatKst(kstNow);
     const tm1 = formatKst(kst6hAgo);
 
-    let targetUrl = '';
-
-    if (type === 'buoy') {
-        // 검증된 sea_obs.php 기간조회(tm1 ~ tm2)
-        targetUrl = `https://apihub.kma.go.kr/api/typ01/url/sea_obs.php?tm1=${tm1}&tm2=${tm2}&stn=0&help=0&authKey=${cleanKey}`;
-    } else if (type === 'aws') {
-        // AWS 전체 15개 지점 일괄 조회 (평균풍속 + 순간바람 GUST)
-        targetUrl = `https://apihub.kma.go.kr/api/typ01/cgi-bin/url/nph-aws2_min?tm1=${tm1}&tm2=${tm2}&stn=0&disp=0&help=0&authKey=${cleanKey}`;
-    } else if (type === 'warn') {
-        // 기상특보 현황
-        targetUrl = `https://apihub.kma.go.kr/api/typ01/url/wrn_now_data.php?fe=f&tm=&disp=0&help=0&authKey=${cleanKey}`;
-    }
-
     try {
+        if (type === 'buoy') {
+            // 1) 해양기상부이 기간조회(kma_buoy2.php: 과거 6시간 이력 + WH_MAX 최대파고 + WH_SIG 유의파고)
+            // 2) 파고부이(22500, 22481, 22449) 및 등표(959)용 sea_obs.php 병행 조회
+            const buoy2Url = `https://apihub.kma.go.kr/api/typ01/url/kma_buoy2.php?tm1=${tm1}&tm2=${tm2}&stn=0&help=1&authKey=${cleanKey}`;
+            const seaObsUrl = `https://apihub.kma.go.kr/api/typ01/url/sea_obs.php?tm1=${tm1}&tm2=${tm2}&stn=0&help=0&authKey=${cleanKey}`;
+
+            const [resBuoy2, resSea] = await Promise.allSettled([
+                fetch(buoy2Url, { headers: { 'User-Agent': 'Mozilla/5.0' }, cache: 'no-store' }),
+                fetch(seaObsUrl, { headers: { 'User-Agent': 'Mozilla/5.0' }, cache: 'no-store' })
+            ]);
+
+            const decoder = new TextDecoder('euc-kr');
+            let buoy2Text = '';
+            let seaText = '';
+
+            if (resBuoy2.status === 'fulfilled' && resBuoy2.value.ok) {
+                const buf = await resBuoy2.value.arrayBuffer();
+                buoy2Text = decoder.decode(buf);
+            }
+            if (resSea.status === 'fulfilled' && resSea.value.ok) {
+                const buf = await resSea.value.arrayBuffer();
+                seaText = decoder.decode(buf);
+            }
+
+            const combined = `===BUOY2_START===\n${buoy2Text}\n===SEAOBS_START===\n${seaText}`;
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            return res.status(200).send(combined);
+        }
+
+        let targetUrl = '';
+        if (type === 'aws') {
+            targetUrl = `https://apihub.kma.go.kr/api/typ01/cgi-bin/url/nph-aws2_min?tm1=${tm1}&tm2=${tm2}&stn=0&itv=10&disp=0&help=0&authKey=${cleanKey}`;
+        } else if (type === 'warn') {
+            targetUrl = `https://apihub.kma.go.kr/api/typ01/url/wrn_now_data.php?fe=f&tm=&disp=0&help=0&authKey=${cleanKey}`;
+        }
+
         const response = await fetch(targetUrl, {
             headers: { 'User-Agent': 'Mozilla/5.0' },
             cache: 'no-store'
