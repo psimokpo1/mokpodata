@@ -1,4 +1,4 @@
-// api/kma.js (기상청 해양기상부이 기간조회 kma_buoy2.php + 파고부이/등표 sea_obs.php + AWS 10분간격 6시간 이력 + 기상특보)
+// api/kma.js (기상청 해양기상부이 kma_buoy2 + 파고부이/등표 sea_obs + AWS 즉시/3시간 분리 + 기상특보)
 export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -10,6 +10,7 @@ export default async function handler(req, res) {
     const nowUtc = Date.now();
     const kstNow = new Date(nowUtc + 9 * 60 * 60 * 1000);
     const kst6hAgo = new Date(nowUtc + 9 * 60 * 60 * 1000 - 6 * 60 * 60 * 1000);
+    const kst3hAgo = new Date(nowUtc + 9 * 60 * 60 * 1000 - 3 * 60 * 60 * 1000);
 
     const formatKst = (d) => {
         const yyyy = d.getUTCFullYear();
@@ -21,14 +22,13 @@ export default async function handler(req, res) {
     };
 
     const tm2 = formatKst(kstNow);
-    const tm1 = formatKst(kst6hAgo);
+    const tm1_6h = formatKst(kst6hAgo);
+    const tm1_3h = formatKst(kst3hAgo);
 
     try {
         if (type === 'buoy') {
-            // 1) 해양기상부이 기간조회(kma_buoy2.php: 과거 6시간 이력 + WH_MAX 최대파고 + WH_SIG 유의파고)
-            // 2) 파고부이(22500, 22481, 22449) 및 등표(959)용 sea_obs.php 병행 조회
-            const buoy2Url = `https://apihub.kma.go.kr/api/typ01/url/kma_buoy2.php?tm1=${tm1}&tm2=${tm2}&stn=0&help=1&authKey=${cleanKey}`;
-            const seaObsUrl = `https://apihub.kma.go.kr/api/typ01/url/sea_obs.php?tm1=${tm1}&tm2=${tm2}&stn=0&help=0&authKey=${cleanKey}`;
+            const buoy2Url = `https://apihub.kma.go.kr/api/typ01/url/kma_buoy2.php?tm1=${tm1_6h}&tm2=${tm2}&stn=0&help=1&authKey=${cleanKey}`;
+            const seaObsUrl = `https://apihub.kma.go.kr/api/typ01/url/sea_obs.php?tm1=${tm1_6h}&tm2=${tm2}&stn=0&help=0&authKey=${cleanKey}`;
 
             const [resBuoy2, resSea] = await Promise.allSettled([
                 fetch(buoy2Url, { headers: { 'User-Agent': 'Mozilla/5.0' }, cache: 'no-store' }),
@@ -55,8 +55,12 @@ export default async function handler(req, res) {
         }
 
         let targetUrl = '';
-        if (type === 'aws') {
-            targetUrl = `https://apihub.kma.go.kr/api/typ01/cgi-bin/url/nph-aws2_min?tm1=${tm1}&tm2=${tm2}&stn=0&itv=10&disp=0&help=0&authKey=${cleanKey}`;
+        if (type === 'aws_now') {
+            // 1단계: 모바일 즉각 표출용 최신 1시각 스냅샷 (초고속 응답)
+            targetUrl = `https://apihub.kma.go.kr/api/typ01/cgi-bin/url/nph-aws2_min?stn=0&disp=0&help=0&authKey=${cleanKey}`;
+        } else if (type === 'aws') {
+            // 2단계: 백그라운드 이력용 최근 3시간(10분 간격) 경량 조회
+            targetUrl = `https://apihub.kma.go.kr/api/typ01/cgi-bin/url/nph-aws2_min?tm1=${tm1_3h}&tm2=${tm2}&stn=0&itv=10&disp=0&help=0&authKey=${cleanKey}`;
         } else if (type === 'warn') {
             targetUrl = `https://apihub.kma.go.kr/api/typ01/url/wrn_now_data.php?fe=f&tm=&disp=0&help=0&authKey=${cleanKey}`;
         }
