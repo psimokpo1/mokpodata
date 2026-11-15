@@ -1061,7 +1061,9 @@ function parseWeatherWarnings(rawText) {
     const csvRecords = parseKmaWarnRecords(rawText);
     if (csvRecords.length > 0) {
         csvRecords.forEach(rec => {
+            const regUpKo = rec.regUpKo.replace(/\s/g, '');
             const regKo = rec.regKo.replace(/\s/g, '');
+            const fullReg = regUpKo + regKo;
             const wrn = rec.wrn.replace(/\s/g, '');
             const lvl = rec.lvl.replace(/\s/g, '');
             const cmd = rec.cmd.replace(/\s/g, '');
@@ -1094,14 +1096,22 @@ function parseWeatherWarnings(rawText) {
                 else alertType = '풍랑예비특보';
             }
 
-            if (regKo.includes('전남북부')) setSeaWarningByLatestFc('서해남부앞바다(전남북부)', alertType, fcTimeNum);
-            else if (regKo.includes('전남중부')) setSeaWarningByLatestFc('서해남부앞바다(전남중부)', alertType, fcTimeNum);
-            else if (regKo.includes('전남남부')) setSeaWarningByLatestFc('서해남부앞바다(전남남부)', alertType, fcTimeNum);
-            else if (regKo.includes('북쪽안쪽먼바다') || (regKo.includes('서해남부') && regKo.includes('북쪽') && regKo.includes('먼바다'))) setSeaWarningByLatestFc('서해남부북쪽안쪽먼바다', alertType, fcTimeNum);
-            else if (regKo.includes('남쪽안쪽먼바다') || (regKo.includes('서해남부') && regKo.includes('남쪽') && regKo.includes('먼바다'))) setSeaWarningByLatestFc('서해남부남쪽안쪽먼바다', alertType, fcTimeNum);
-            else if (regKo.includes('남쪽바깥먼바다')) setSeaWarningByLatestFc('서해남부남쪽안쪽먼바다', alertType, fcTimeNum);
-            else if (regKo.includes('남해서부서쪽먼바다') || (regKo.includes('남해서부') && regKo.includes('서쪽'))) setSeaWarningByLatestFc('남해서부서쪽먼바다', alertType, fcTimeNum);
-            else if (regKo.includes('제주도북부앞바다') || (regKo.includes('제주도') && regKo.includes('북부앞'))) setSeaWarningByLatestFc('제주도북부앞바다', alertType, fcTimeNum);
+            // 반드시 상위 해역명(서해남부 / 남해서부 / 제주도)까지 일치할 때만 매핑
+            if (fullReg.includes('서해남부') && regKo.includes('전남북부')) {
+                setSeaWarningByLatestFc('서해남부앞바다(전남북부)', alertType, fcTimeNum);
+            } else if (fullReg.includes('서해남부') && regKo.includes('전남중부')) {
+                setSeaWarningByLatestFc('서해남부앞바다(전남중부)', alertType, fcTimeNum);
+            } else if (fullReg.includes('서해남부') && regKo.includes('전남남부')) {
+                setSeaWarningByLatestFc('서해남부앞바다(전남남부)', alertType, fcTimeNum);
+            } else if (fullReg.includes('서해남부') && regKo.includes('북쪽안쪽먼바다')) {
+                setSeaWarningByLatestFc('서해남부북쪽안쪽먼바다', alertType, fcTimeNum);
+            } else if (fullReg.includes('서해남부') && (regKo.includes('남쪽안쪽먼바다') || regKo.includes('남쪽바깥먼바다'))) {
+                setSeaWarningByLatestFc('서해남부남쪽안쪽먼바다', alertType, fcTimeNum);
+            } else if (fullReg.includes('남해서부') && regKo.includes('서쪽먼바다')) {
+                setSeaWarningByLatestFc('남해서부서쪽먼바다', alertType, fcTimeNum);
+            } else if (fullReg.includes('제주도') && regKo.includes('북부앞바다')) {
+                setSeaWarningByLatestFc('제주도북부앞바다', alertType, fcTimeNum);
+            }
         });
         return;
     }
@@ -1111,7 +1121,9 @@ function parseWeatherWarnings(rawText) {
         let data = JSON.parse(rawText);
         let items = Array.isArray(data) ? data : (data.items || data.result || []);
         items.forEach(item => {
+            let regUpKo = String(item.REG_UP_KO || '').replace(/\s/g, '');
             let regKo = String(item.REG_KO || item.REG_NAME || '').replace(/\s/g, '');
+            let fullReg = regUpKo + regKo;
             let wrn = String(item.WRN || '').replace(/\s/g, '');
             let lvl = String(item.LVL || '').replace(/\s/g, '');
             let cmd = String(item.CMD || '').replace(/\s/g, '');
@@ -1120,13 +1132,13 @@ function parseWeatherWarnings(rawText) {
             if (!wrn.includes('풍랑') && !wrn.includes('해상')) return;
 
             let alertType = lvl.includes('예비') ? '풍랑예비특보' : (lvl.includes('경보') ? '풍랑경보(발효중)' : '풍랑주의보(발효중)');
-            if (regKo.includes('전남북부')) setSeaWarningByLatestFc('서해남부앞바다(전남북부)', alertType, fcTimeNum);
-            else if (regKo.includes('전남중부')) setSeaWarningByLatestFc('서해남부앞바다(전남중부)', alertType, fcTimeNum);
-            else if (regKo.includes('전남남부')) setSeaWarningByLatestFc('서해남부앞바다(전남남부)', alertType, fcTimeNum);
-            else if (regKo.includes('북쪽안쪽먼바다')) setSeaWarningByLatestFc('서해남부북쪽안쪽먼바다', alertType, fcTimeNum);
-            else if (regKo.includes('남쪽안쪽먼바다')) setSeaWarningByLatestFc('서해남부남쪽안쪽먼바다', alertType, fcTimeNum);
-            else if (regKo.includes('남해서부서쪽먼바다')) setSeaWarningByLatestFc('남해서부서쪽먼바다', alertType, fcTimeNum);
-            else if (regKo.includes('제주도북부앞바다')) setSeaWarningByLatestFc('제주도북부앞바다', alertType, fcTimeNum);
+            if (fullReg.includes('서해남부') && regKo.includes('전남북부')) setSeaWarningByLatestFc('서해남부앞바다(전남북부)', alertType, fcTimeNum);
+            else if (fullReg.includes('서해남부') && regKo.includes('전남중부')) setSeaWarningByLatestFc('서해남부앞바다(전남중부)', alertType, fcTimeNum);
+            else if (fullReg.includes('서해남부') && regKo.includes('전남남부')) setSeaWarningByLatestFc('서해남부앞바다(전남남부)', alertType, fcTimeNum);
+            else if (fullReg.includes('서해남부') && regKo.includes('북쪽안쪽먼바다')) setSeaWarningByLatestFc('서해남부북쪽안쪽먼바다', alertType, fcTimeNum);
+            else if (fullReg.includes('서해남부') && regKo.includes('남쪽안쪽먼바다')) setSeaWarningByLatestFc('서해남부남쪽안쪽먼바다', alertType, fcTimeNum);
+            else if (fullReg.includes('남해서부') && regKo.includes('서쪽먼바다')) setSeaWarningByLatestFc('남해서부서쪽먼바다', alertType, fcTimeNum);
+            else if (fullReg.includes('제주도') && regKo.includes('북부앞바다')) setSeaWarningByLatestFc('제주도북부앞바다', alertType, fcTimeNum);
         });
     } catch (e) {}
 }
@@ -1152,11 +1164,17 @@ function buildWeatherNuriSummaryHtml(rawText) {
     }
 
     let latestFc = '';
-    let latestEf = '';
+    let latestMainEf = '';
+    let latestAnyEf = '';
+
     records.forEach(r => {
         if (r.tmFc > latestFc) latestFc = r.tmFc;
-        if (r.tmEf > latestEf) latestEf = r.tmEf;
+        if (r.tmEf > latestAnyEf) latestAnyEf = r.tmEf;
+        const isPre = r.lvl.includes('예비') || r.cmd.includes('예비') || r.cmd === '2';
+        if (!isPre && r.tmEf > latestMainEf) latestMainEf = r.tmEf;
     });
+
+    const displayEf = latestMainEf || latestAnyEf;
 
     const normalGroups = {};
     const pyungsuList = [];
@@ -1203,7 +1221,7 @@ function buildWeatherNuriSummaryHtml(rawText) {
     return `
         <div style="font-size:13px; color:#1E293B; margin-bottom:10px; padding-bottom:8px; border-bottom:1px solid #E2E8F0;">
             <div><strong>발표시각</strong> : ${formatWarnTimestampKo(latestFc)}</div>
-            <div style="margin-top:3px;"><strong>발효시각</strong> : ${formatWarnTimestampKo(latestEf)} 이후</div>
+            <div style="margin-top:3px;"><strong>발효시각</strong> : ${formatWarnTimestampKo(displayEf)} 이후</div>
         </div>
         <div style="background:#FFFFFF; border:1px solid #CBD5E1; border-radius:6px; padding:14px; max-height:310px; overflow-y:auto; font-size:13.5px; color:#1E293B;">
             ${bodyLinesHtml || '<div style="color:#64748B;">발효 중인 특보 내역이 없습니다.</div>'}
