@@ -1,4 +1,4 @@
-// api/kma.js (기상청 해양기상부이/등표, AWS, 기상특보 - 최근 6시간 이력 전체 조회 지원)
+// api/kma.js (기상청 해양기상부이/등표/파고부이, 다중 AWS 15개소, 기상특보 - 최근 6시간 이력 전체 조회 지원)
 export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -24,14 +24,19 @@ export default async function handler(req, res) {
     const tm2 = formatKst(kstNow);
     const tm1 = formatKst(kst6hAgo);
 
+    // 항로별 맞춤 육상 AWS 15개 지점 일괄 조회 목록
+    // 308:옥도, 743:비금, 714:자은도, 799:낙월도, 303:가거도, 169:흑산도, 797:하태도,
+    // 798:홍도, 697:서거차, 718:상조도, 716:하의도, 771:안좌, 789:압해도, 707:지도, 264:안마도
+    const AWS_STATIONS = '308:743:714:799:303:169:797:798:697:718:716:771:789:707:264';
+
     let targetUrl = '';
 
     if (type === 'buoy') {
-        // 해양기상부이 및 등표: 최근 6시간 전체 로그(tm1 ~ tm2)
-        targetUrl = `https://apihub.kma.go.kr/api/typ01/url/sea_obs.php?tm1=${tm1}&tm2=${tm2}&stn=0&help=0&authKey=${cleanKey}`;
+        // 해양기상부이, 등표, 파고부이(22500, 22481, 22449 포함): 최근 6시간 전체 로그(tm1 ~ tm2)
+        targetUrl = `https://apihub.kma.go.kr/api/typ01/url/sea_obs.php?tm1=${tm1}&tm2=${tm2}&stn=0&disp=0&help=0&authKey=${cleanKey}`;
     } else if (type === 'aws') {
-        // 방재기상관측(AWS) 옥도(308): 최근 6시간 정시/분 자료 전체 조회
-        targetUrl = `https://apihub.kma.go.kr/api/typ01/cgi-bin/url/nph-aws2_min?tm1=${tm1}&tm2=${tm2}&stn=308&disp=0&help=0&authKey=${cleanKey}`;
+        // 방재기상관측(AWS) 15개 지점: 최근 6시간 분 자료(평균풍속 및 순간바람 GUST 포함) 전체 조회
+        targetUrl = `https://apihub.kma.go.kr/api/typ01/cgi-bin/url/nph-aws2_min?tm1=${tm1}&tm2=${tm2}&stn=${AWS_STATIONS}&disp=0&help=0&authKey=${cleanKey}`;
     } else if (type === 'warn') {
         // 기상특보 현황
         targetUrl = `https://apihub.kma.go.kr/api/typ01/url/wrn_now_data.php?fe=f&tm=&disp=0&help=0&authKey=${cleanKey}`;
