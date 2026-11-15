@@ -1,4 +1,4 @@
-// api/kma.js (기상청 해양기상부이 kma_buoy2 + 파고부이/등표 sea_obs + AWS 즉시/3시간 분리 + 기상특보 + 특보지도 이미지)
+// api/kma.js (기상청 해양기상부이 kma_buoy2 + 파고부이/등표 sea_obs + AWS 즉시/3시간 분리 + 기상특보 + 날씨누리 실시간 특보지도 프록시)
 export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -26,20 +26,59 @@ export default async function handler(req, res) {
     const tm1_3h = formatKst(kst3hAgo);
 
     try {
-        // 1. 기상청 날씨누리 최신 특보 발효현황 지도 이미지 프록시
+        // 1. 기상청 날씨누리 실시간 특보 발효현황 지도 이미지 프록시 (Referer 헤더 및 최신 이미지 경로 탐색)
         if (type === 'warn_img') {
+            const kmaHeaders = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                'Referer': 'https://www.weather.go.kr/w/weather/warning/status.do',
+                'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+            };
+
             const imgCandidates = [
                 `https://www.weather.go.kr/w/repositary/xml/wrn/img/wrn_now_data.png?_t=${nowUtc}`,
+                `https://www.weather.go.kr/w/repositary/xml/wrn/img/SEA_wrn_now.png?_t=${nowUtc}`,
                 `https://www.weather.go.kr/w/repositary/xml/wrn/img/KOR_wrn_now.png?_t=${nowUtc}`
             ];
+
+            // 최신 발표시각(TM_FC) 기반 이미지 파일명(wrn_now_data_YYYYMMDDHHMM.png) 동적 탐색 추가
+            try {
+                const warnUrl = `https://apihub.kma.go.kr/api/typ01/url/wrn_now_data.php?fe=f&tm=&disp=0&help=0&authKey=${cleanKey}`;
+                const warnRes = await fetch(warnUrl, { headers: { 'User-Agent': 'Mozilla/5.0' }, cache: 'no-store' });
+                if (warnRes.ok) {
+                    const wBuf = await warnRes.arrayBuffer();
+                    const wText = new TextDecoder('euc-kr').decode(wBuf);
+                    let latestFc = '';
+                    wText.split('\n').forEach(line => {
+                        const l = line.trim();
+                        if (!l || l.startsWith('#')) return;
+                        const cols = l.split(',').map(c => c.trim());
+                        if (cols.length >= 5) {
+                            const fcDigits = (cols[4] || '').replace(/\D/g, '');
+                            if (fcDigits.length >= 12 && fcDigits > latestFc) {
+                                latestFc = fcDigits.substring(0, 12);
+                            }
+                        }
+                    });
+                    if (latestFc) {
+                        imgCandidates.unshift(
+                            `https://www.weather.go.kr/w/repositary/xml/wrn/img/wrn_now_data_${latestFc}.png`,
+                            `https://www.weather.go.kr/w/repositary/xml/wrn/img/SEA_wrn_now_${latestFc}.png`
+                        );
+                    }
+                }
+            } catch (e) {}
+
             for (const imgUrl of imgCandidates) {
                 try {
-                    const imgRes = await fetch(imgUrl, { headers: { 'User-Agent': 'Mozilla/5.0' }, cache: 'no-store' });
-                    if (imgRes.ok) {
+                    const imgRes = await fetch(imgUrl, { headers: kmaHeaders, cache: 'no-store' });
+                    const cType = imgRes.headers.get('content-type') || '';
+                    if (imgRes.ok && cType.startsWith('image/')) {
                         const buf = Buffer.from(await imgRes.arrayBuffer());
-                        res.setHeader('Content-Type', imgRes.headers.get('content-type') || 'image/png');
-                        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-                        return res.status(200).send(buf);
+                        if (buf.length > 1000) {
+                            res.setHeader('Content-Type', cType);
+                            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+                            return res.status(200).send(buf);
+                        }
                     }
                 } catch (e) {}
             }
