@@ -27,26 +27,6 @@ let nextRefreshRemainingSec = 300;
 let latestRawWarnText = "기상청 특보 통보문을 수신 중입니다...";
 let lastNmpntFetchMs = 0;
 
-// 관측소별 시간대별 과거 이력 저장소 (localStorage 영속화 지원)
-let stationHistoryMap = {};
-try {
-    const savedHist = localStorage.getItem('komsa_station_history_v1');
-    if (savedHist) stationHistoryMap = JSON.parse(savedHist);
-} catch (e) {
-    stationHistoryMap = {};
-}
-
-function saveStationHistoryCache() {
-    try {
-        for (let k in stationHistoryMap) {
-            if (Array.isArray(stationHistoryMap[k])) {
-                stationHistoryMap[k] = stationHistoryMap[k].filter(h => isWithinLast6Hours(h.sortKey));
-            }
-        }
-        localStorage.setItem('komsa_station_history_v1', JSON.stringify(stationHistoryMap));
-    } catch (e) {}
-}
-
 const DEFAULT_KMA_AUTHKEY = "s0C3VEw6ScOAt1RMOinDFQ";
 const DEFAULT_NMPNT_KEY = "A8ECE1B4-0A1E-43E9-A5D4-7D4D906FC401";
 const DEFAULT_KHOA_KEY = "47f38047094726017ef3dadeff2e4c2733c634c7878d7aa7f56a6a5b226c9eb3";
@@ -106,6 +86,208 @@ let latestBuoyData = {
     '우이도조사원': { obsCode: 'TW_0080', type: 'khoa',   name: '우이도관측소(조사원)', wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
     '진도조위':     { obsCode: 'DT_0028', type: 'khoa',   name: '진도조위(조사원)',     wind: '-', windDir: '-', sigWave: null, maxWave: null }
 };
+
+// ==========================================
+// 1-1. 관측소 과거 이력 스마트 병합(Smart Merge) & 캐시 방어 엔진
+// ==========================================
+const HISTORY_CACHE_KEY = 'komsa_station_history_v2';
+let stationHistoryMap = {};
+
+function parseSortKeyToUtcMs(sortKey) {
+    if (!sortKey) return NaN;
+    const digits = String(sortKey).replace(/\D/g, '');
+    if (digits.length < 12) return NaN;
+    const y = parseInt(digits.substring(0, 4), 10);
+    const m = parseInt(digits.substring(4, 6), 10) - 1;
+    const d = parseInt(digits.substring(6, 8), 10);
+    const h = parseInt(digits.substring(8, 10), 10);
+    const min = parseInt(digits.substring(10, 12), 10);
+    return Date.UTC(y, m, d, h - 9, min, 0);
+}
+
+function formatUtcMsToKstSlot(utcMs) {
+    const kst = new Date(utcMs + 9 * 60 * 60 * 1000);
+    const yyyy = kst.getUTCFullYear();
+    const mm = String(kst.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(kst.getUTCDate()).padStart(2, '0');
+    const hh = String(kst.getUTCHours()).padStart(2, '0');
+    const min = String(kst.getUTCMinutes()).padStart(2, '0');
+    return {
+        sortKey: `${yyyy}${mm}${dd}${hh}${min}`,
+        time: `${hh}:${min}`
+    };
+}
+
+function isWithinLast6Hours(sortKey) {
+    const itemUtcMs = parseSortKeyToUtcMs(sortKey);
+    if (isNaN(itemUtcMs)) return false;
+    const diffMs = Date.now() - itemUtcMs;
+    // 최근 6시간 + 30분 버퍼(직전 슬롯 이어받기용)까지 안전하게 보존
+    return diffMs >= -15 * 60 * 1000 && diffMs <= (6 * 60 + 30) * 60 * 1000;
+}
+
+function isValidMetric(val) {
+    return val !== undefined && val !== null && val !== '-' && val !== '' && !isNaN(parseFloat(val));
+}
+
+// 기존 이력에 새 데이터를 덮어쓰지 않고 유효 필드만 정밀 병합(Smart Merge)
+function upsertStationHistory(stKey, entry) {
+    if (!stKey || !entry || !entry.sortKey) return;
+    const digits = String(entry.sortKey).replace(/\D/g, '');
+    if (digits.length < 12) return;
+
+    const normSortKey = digits.substring(0, 12);
+    const normTime = entry.time && entry.time !== '최신'
+        ? entry.time
+        : `${normSortKey.substring(8, 10)}:${normSortKey.substring(10, 12)}`;
+
+    if (!isWithinLast6Hours(normSortKey)) return;
+
+    const hasAnyValid = isValidMetric(entry.wind) || isValidMetric(entry.gust) || isValidMetric(entry.sigWave) || isValidMetric(entry.maxWave);
+    if (!hasAnyValid) return;
+
+    if (!Array.isArray(stationHistoryMap[stKey])) stationHistoryMap[stKey] = [];
+    const list = stationHistoryMap[stKey];
+    const idx = list.findIndex(h => String(h.sortKey).substring(0, 12) === normSortKey);
+
+    if (idx >= 0) {
+        const prev = list[idx];
+        list[idx] = {
+            sortKey: normSortKey,
+            time: normTime,
+            wind: isValidMetric(entry.wind) ? entry.wind : (prev.wind ?? '-'),
+            gust: isValidMetric(entry.gust) ? entry.gust : (prev.gust ?? '-'),
+            windDir: (entry.windDir && entry.windDir !== '-') ? entry.windDir : (prev.windDir ?? '-'),
+            sigWave: isValidMetric(entry.sigWave) ? entry.sigWave : (prev.sigWave ?? null),
+            maxWave: isValidMetric(entry.maxWave) ? entry.maxWave : (prev.maxWave ?? null),
+            isInterpolated: false
+        };
+    } else {
+        list.push({
+            sortKey: normSortKey,
+            time: normTime,
+            wind: isValidMetric(entry.wind) ? entry.wind : '-',
+            gust: isValidMetric(entry.gust) ? entry.gust : '-',
+            windDir: (entry.windDir && entry.windDir !== '-') ? entry.windDir : '-',
+            sigWave: isValidMetric(entry.sigWave) ? entry.sigWave : null,
+            maxWave: isValidMetric(entry.maxWave) ? entry.maxWave : null,
+            isInterpolated: false
+        });
+    }
+}
+
+// 앱 시작/새로고침 시 캐시 즉시 복원 및 latestBuoyData 초기 하이드레이션
+function loadStationHistoryCache() {
+    try {
+        const saved = localStorage.getItem(HISTORY_CACHE_KEY) || localStorage.getItem('komsa_station_history_v1');
+        if (saved) {
+            const parsed = JSON.parse(saved);
+            for (let k in parsed) {
+                if (Array.isArray(parsed[k])) {
+                    const validRows = parsed[k]
+                        .filter(h => isWithinLast6Hours(h.sortKey))
+                        .sort((a, b) => String(a.sortKey).localeCompare(String(b.sortKey)));
+                    stationHistoryMap[k] = validRows;
+
+                    // 캐시된 가장 최신 값을 latestBuoyData에 미리 반영 (새로고침 직후 '-' 공백 방지)
+                    if (validRows.length > 0 && latestBuoyData[k]) {
+                        const last = validRows[validRows.length - 1];
+                        if (latestBuoyData[k].wind !== null && isValidMetric(last.wind)) {
+                            latestBuoyData[k].wind = parseFloat(last.wind).toFixed(1);
+                            if (last.windDir && last.windDir !== '-') latestBuoyData[k].windDir = last.windDir;
+                        }
+                        if (latestBuoyData[k].type === 'aws' && isValidMetric(last.gust)) {
+                            latestBuoyData[k].gust = parseFloat(last.gust).toFixed(1);
+                        }
+                        if (latestBuoyData[k].sigWave !== null && isValidMetric(last.sigWave)) {
+                            latestBuoyData[k].sigWave = parseFloat(last.sigWave).toFixed(1);
+                        }
+                        if (latestBuoyData[k].maxWave !== null && isValidMetric(last.maxWave)) {
+                            latestBuoyData[k].maxWave = parseFloat(last.maxWave).toFixed(1);
+                        }
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        stationHistoryMap = {};
+    }
+}
+loadStationHistoryCache();
+
+function saveStationHistoryCache() {
+    try {
+        for (let k in stationHistoryMap) {
+            if (Array.isArray(stationHistoryMap[k])) {
+                // 중복 sortKey 제거 후 6시간 내 데이터만 시간순 정렬 유지
+                const dedupMap = {};
+                stationHistoryMap[k].forEach(item => {
+                    if (!isWithinLast6Hours(item.sortKey)) return;
+                    const sk = String(item.sortKey).substring(0, 12);
+                    dedupMap[sk] = { ...item, sortKey: sk };
+                });
+                stationHistoryMap[k] = Object.values(dedupMap).sort((a, b) => a.sortKey.localeCompare(b.sortKey));
+            }
+        }
+        localStorage.setItem(HISTORY_CACHE_KEY, JSON.stringify(stationHistoryMap));
+    } catch (e) {}
+}
+
+// 모달 표출용 연속 타임라인 생성기 (수신 누락 구간 10분 단위 직전 유효값 보정 지원)
+function buildContinuousHistoryForModal(stKey) {
+    const rawList = (stationHistoryMap[stKey] || [])
+        .filter(h => isWithinLast6Hours(h.sortKey))
+        .sort((a, b) => String(a.sortKey).localeCompare(String(b.sortKey)));
+
+    if (rawList.length === 0) return [];
+
+    const stData = latestBuoyData[stKey];
+    const isBuoyOrWaveBuoy = stData && (stData.type === 'buoy' || stData.type === 'wavebuoy' || stData.type === 'beacon');
+    // 기상청 해양기상부이/파고부이는 정시(1시간) 단위 원시 데이터이므로 원시 이력 그대로 표출
+    if (isBuoyOrWaveBuoy) {
+        return rawList.filter(h => {
+            const diff = Date.now() - parseSortKeyToUtcMs(h.sortKey);
+            return diff >= -15 * 60 * 1000 && diff <= 6 * 60 * 60 * 1000 + 15 * 60 * 1000;
+        });
+    }
+
+    // AWS / 측위정보원 / 해양조사원은 10분 단위 슬롯으로 빈 구간을 직전 유효 관측값과 부드럽게 연결
+    const tenMinMs = 10 * 60 * 1000;
+    const nowFlooredMs = Math.floor(Date.now() / tenMinMs) * tenMinMs;
+    const sixHoursAgoMs = nowFlooredMs - 6 * 60 * 60 * 1000;
+
+    // 10분 단위 버킷에 실제 관측 데이터 매핑
+    const bucketMap = {};
+    rawList.forEach(item => {
+        const ms = parseSortKeyToUtcMs(item.sortKey);
+        if (isNaN(ms)) return;
+        const slotMs = Math.floor(ms / tenMinMs) * tenMinMs;
+        bucketMap[slotMs] = { ...item, isInterpolated: false };
+    });
+
+    const firstObservedMs = Math.floor(parseSortKeyToUtcMs(rawList[0].sortKey) / tenMinMs) * tenMinMs;
+    const startMs = Math.max(sixHoursAgoMs, firstObservedMs);
+
+    const filledList = [];
+    let lastCarry = null;
+
+    for (let t = startMs; t <= nowFlooredMs; t += tenMinMs) {
+        if (bucketMap[t]) {
+            lastCarry = bucketMap[t];
+            filledList.push(lastCarry);
+        } else if (lastCarry) {
+            const slotInfo = formatUtcMsToKstSlot(t);
+            filledList.push({
+                ...lastCarry,
+                sortKey: slotInfo.sortKey,
+                time: slotInfo.time,
+                isInterpolated: true
+            });
+        }
+    }
+
+    return filledList;
+}
 
 let activeSeaWarnings = {
     '서해남부북쪽안쪽먼바다': null,
@@ -455,7 +637,7 @@ function parseVesselControlCriteria(rawName, decision, route, notes, ports = '')
 }
 
 // ==========================================
-// 4. 상황판 및 최근 6시간 과거 이력 타임테이블 모달 (AWS 순간바람 포함)
+// 4. 상황판 및 최근 6시간 과거 이력 타임테이블 모달 (AWS 순간바람 & 연속 슬롯 보정 포함)
 // ==========================================
 window.toggleMeteoDetailRow = function(shipCode) {
     const detailRow = document.getElementById(`meteo-detail-${shipCode}`);
@@ -466,26 +648,10 @@ window.toggleMeteoDetailRow = function(shipCode) {
     if (icon) icon.innerText = isShowing ? '▼' : '▲';
 };
 
-function isWithinLast6Hours(sortKey) {
-    if (!sortKey || sortKey.length < 12) return true;
-    const digits = sortKey.replace(/\D/g, '');
-    if (digits.length < 12) return true;
-    const y = parseInt(digits.substring(0, 4), 10);
-    const m = parseInt(digits.substring(4, 6), 10) - 1;
-    const d = parseInt(digits.substring(6, 8), 10);
-    const h = parseInt(digits.substring(8, 10), 10);
-    const min = parseInt(digits.substring(10, 12), 10);
-    const itemUtcMs = Date.UTC(y, m, d, h - 9, min, 0);
-    const diffMs = Date.now() - itemUtcMs;
-    return diffMs >= -15 * 60 * 1000 && diffMs <= 6 * 60 * 60 * 1000 + 15 * 60 * 1000;
-}
-
 window.openWeatherHistoryModal = function(stKey) {
     const stData = latestBuoyData[stKey];
     const stName = stData ? (stData.name || stKey) : stKey;
-    let rawHistory = stationHistoryMap[stKey] || [];
-
-    let historyArr = rawHistory.filter(h => isWithinLast6Hours(h.sortKey));
+    const historyArr = buildContinuousHistoryForModal(stKey);
 
     let modalEl = document.getElementById('weather-history-modal');
     if (!modalEl) {
@@ -508,6 +674,10 @@ window.openWeatherHistoryModal = function(stKey) {
         let sortedList = [...historyArr].sort((a, b) => (b.sortKey || b.time || '').localeCompare(a.sortKey || a.time || ''));
         sortedList.forEach(h => {
             let tStr = h.time || '-';
+            if (h.isInterpolated) {
+                tStr += ` <span style="font-size:10px; color:#94A3B8;">(유지)</span>`;
+            }
+            let rowBg = h.isInterpolated ? 'background:#F8FAFC; color:#64748B;' : '';
             let wDir = h.windDir || '-';
             let wSpd = (!isNaN(parseFloat(h.wind)) && h.wind !== '-') ? parseFloat(h.wind).toFixed(1) : '-';
             let gSpd = (!isNaN(parseFloat(h.gust)) && h.gust !== '-') ? parseFloat(h.gust).toFixed(1) : '-';
@@ -516,7 +686,7 @@ window.openWeatherHistoryModal = function(stKey) {
 
             if (isAws) {
                 rowsHtml += `
-                    <tr>
+                    <tr style="${rowBg}">
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${tStr}</td>
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${stName}</td>
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${wDir}</td>
@@ -526,7 +696,7 @@ window.openWeatherHistoryModal = function(stKey) {
                 `;
             } else if (isWindOnly) {
                 rowsHtml += `
-                    <tr>
+                    <tr style="${rowBg}">
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${tStr}</td>
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${stName}</td>
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${wDir}</td>
@@ -535,7 +705,7 @@ window.openWeatherHistoryModal = function(stKey) {
                 `;
             } else if (isWaveBuoy) {
                 rowsHtml += `
-                    <tr>
+                    <tr style="${rowBg}">
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${tStr}</td>
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${stName}</td>
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center; font-weight:bold;">${sigW}</td>
@@ -544,7 +714,7 @@ window.openWeatherHistoryModal = function(stKey) {
                 `;
             } else {
                 rowsHtml += `
-                    <tr>
+                    <tr style="${rowBg}">
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${tStr}</td>
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${stName}</td>
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${wDir}</td>
@@ -1276,7 +1446,7 @@ async function fetchKmaApi(type, authKey, timeoutMs = 12000) {
     }
 }
 
-// AWS 텍스트 파싱 헬퍼 (1단계 즉시 스냅샷 & 2단계 최근 3시간 이력 공용)
+// AWS 텍스트 파싱 헬퍼 (1단계 즉시 스냅샷 & 2단계 최근 3시간 이력 공용 + 스마트 병합 적용)
 function parseAwsTextData(textAws) {
     if (!textAws) return 0;
     const awsLines = textAws.split('\n');
@@ -1319,17 +1489,21 @@ function parseAwsTextData(textAws) {
             const gStr = !isNaN(finalGust) ? finalGust.toFixed(1) : '-';
             const dStr = (!isNaN(finalWd) && finalWd >= 0 && finalWd <= 360) ? degToDirection(finalWd) : '-';
 
-            if (!stationHistoryMap[targetKey]) stationHistoryMap[targetKey] = [];
-            let idx = stationHistoryMap[targetKey].findIndex(h => h.sortKey === tmStr);
-            let entry = { sortKey: tmStr, time: timeOnly, wind: wStr, gust: gStr, windDir: dStr, sigWave: null, maxWave: null };
-            if (idx >= 0) stationHistoryMap[targetKey][idx] = entry;
-            else stationHistoryMap[targetKey].push(entry);
+            upsertStationHistory(targetKey, {
+                sortKey: tmStr,
+                time: timeOnly,
+                wind: wStr,
+                gust: gStr,
+                windDir: dStr,
+                sigWave: null,
+                maxWave: null
+            });
 
             if (!latestAwsTsByKey[targetKey] || tmStr >= latestAwsTsByKey[targetKey]) {
                 latestAwsTsByKey[targetKey] = tmStr;
                 latestBuoyData[targetKey].wind = wStr;
-                latestBuoyData[targetKey].gust = gStr;
-                latestBuoyData[targetKey].windDir = dStr;
+                if (gStr !== '-') latestBuoyData[targetKey].gust = gStr;
+                if (dStr !== '-') latestBuoyData[targetKey].windDir = dStr;
                 count++;
             }
         }
@@ -1452,18 +1626,21 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                             let maxWhVal = (!isNaN(rawMaxWh) && rawMaxWh >= 0.0 && rawMaxWh <= 25.0) ? rawMaxWh.toFixed(1) : '-';
 
                             if (wVal !== '-' || whVal !== '-') {
-                                if (!stationHistoryMap[tb.key]) stationHistoryMap[tb.key] = [];
-                                let idx = stationHistoryMap[tb.key].findIndex(h => h.sortKey === tmStr);
-                                let entry = { sortKey: tmStr, time: timeOnly, wind: wVal, windDir: dVal, sigWave: whVal, maxWave: maxWhVal };
-                                if (idx >= 0) stationHistoryMap[tb.key][idx] = entry;
-                                else stationHistoryMap[tb.key].push(entry);
+                                upsertStationHistory(tb.key, {
+                                    sortKey: tmStr,
+                                    time: timeOnly,
+                                    wind: wVal,
+                                    windDir: dVal,
+                                    sigWave: whVal,
+                                    maxWave: maxWhVal
+                                });
                             }
 
                             if (!latestTsByKey[tb.key] || tmStr >= latestTsByKey[tb.key]) {
                                 latestTsByKey[tb.key] = tmStr;
                                 if (latestBuoyData[tb.key].wind !== null && wVal !== '-') {
                                     latestBuoyData[tb.key].wind = wVal;
-                                    latestBuoyData[tb.key].windDir = dVal;
+                                    if (dVal !== '-') latestBuoyData[tb.key].windDir = dVal;
                                     updatedCount++;
                                 }
                                 if (whVal !== '-') {
@@ -1503,18 +1680,21 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                             let whVal = (!isNaN(rawWh) && rawWh >= 0.0 && rawWh <= 15.0) ? rawWh.toFixed(1) : '-';
 
                             if (wVal !== '-' || whVal !== '-') {
-                                if (!stationHistoryMap[tb.key]) stationHistoryMap[tb.key] = [];
-                                let idx = stationHistoryMap[tb.key].findIndex(h => h.sortKey === tmStr);
-                                if (idx < 0) {
-                                    stationHistoryMap[tb.key].push({ sortKey: tmStr, time: timeOnly, wind: wVal, windDir: dVal, sigWave: whVal, maxWave: '-' });
-                                }
+                                upsertStationHistory(tb.key, {
+                                    sortKey: tmStr,
+                                    time: timeOnly,
+                                    wind: wVal,
+                                    windDir: dVal,
+                                    sigWave: whVal,
+                                    maxWave: '-'
+                                });
                             }
 
                             if (!latestTsByKey[tb.key] || tmStr > latestTsByKey[tb.key]) {
                                 latestTsByKey[tb.key] = tmStr;
                                 if (latestBuoyData[tb.key].wind !== null && wVal !== '-') {
                                     latestBuoyData[tb.key].wind = wVal;
-                                    latestBuoyData[tb.key].windDir = dVal;
+                                    if (dVal !== '-') latestBuoyData[tb.key].windDir = dVal;
                                     updatedCount++;
                                 }
                                 if (whVal !== '-') {
@@ -1543,7 +1723,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             updatedCount += parseAwsTextData(textAwsNow);
         }
 
-        // 3. 측위정보원 등대 (매 10분마다 수집 & 10분 단위 슬롯으로 누적)
+        // 3. 측위정보원 등대 (매 10분마다 수집 & 10분 단위 슬롯으로 누적 + 스마트 병합)
         const nmpntRaw = dataNmpnt?.result?.recordset || dataNmpnt?.recordset || dataNmpnt?.response?.body?.items?.item || dataNmpnt?.items || null;
         if (nmpntRaw) {
             lastNmpntFetchMs = nowMs;
@@ -1579,16 +1759,19 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                     else if (code === '1079007' || name.includes('계마')) targetKey = '계마항';
 
                     if (targetKey && latestBuoyData[targetKey]) {
-                        if (!stationHistoryMap[targetKey]) stationHistoryMap[targetKey] = [];
-                        let idx = stationHistoryMap[targetKey].findIndex(h => h.sortKey === sortKey || h.time === timeOnly);
-                        let entry = { sortKey: sortKey, time: timeOnly, wind: formattedWs, windDir: dirStr, sigWave: null, maxWave: null };
-                        if (idx >= 0) stationHistoryMap[targetKey][idx] = entry;
-                        else stationHistoryMap[targetKey].push(entry);
+                        upsertStationHistory(targetKey, {
+                            sortKey: sortKey,
+                            time: timeOnly,
+                            wind: formattedWs,
+                            windDir: dirStr,
+                            sigWave: null,
+                            maxWave: null
+                        });
 
                         if (!latestNmpntTsByKey[targetKey] || sortKey >= latestNmpntTsByKey[targetKey]) {
                             latestNmpntTsByKey[targetKey] = sortKey;
                             latestBuoyData[targetKey].wind = formattedWs;
-                            latestBuoyData[targetKey].windDir = dirStr;
+                            if (dirStr !== '-') latestBuoyData[targetKey].windDir = dirStr;
                             updatedCount++;
                         }
                     }
@@ -1596,14 +1779,19 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             });
         }
 
-        // 4. 국립해양조사원 관측소 파싱 (추자, 가거초, 향화도, 서거차도, 우이도, 진도조위)
+        // 4. 국립해양조사원 관측소 파싱 (추자, 가거초, 향화도, 서거차도, 우이도, 진도조위 + 스마트 병합)
         const parseKhoaStation = (resObj, targetKey) => {
             if (!resObj || !resObj.result || !resObj.result.data) return false;
             const kData = resObj.result.data;
             let hasAnyData = false;
 
+            const kstNow = new Date(nowMs + 9 * 60 * 60 * 1000);
+            const flooredMin = String(Math.floor(kstNow.getUTCMinutes() / 10) * 10).padStart(2, '0');
+            const yyyyMMddHH = kstNow.toISOString().replace(/\D/g, '').substring(0, 10);
+            const fallbackSortKey = `${yyyyMMddHH}${flooredMin}`;
+            const fallbackTime = `${yyyyMMddHH.substring(8,10)}:${flooredMin}`;
+
             if (Array.isArray(resObj.rawItems)) {
-                if (!stationHistoryMap[targetKey]) stationHistoryMap[targetKey] = [];
                 resObj.rawItems.forEach(item => {
                     const ws = parseFloat(item.windSpeed ?? item.wind_speed ?? item.wspd ?? item.ws);
                     const wd = parseFloat(item.windDir ?? item.wind_dir ?? item.wdir ?? item.wd);
@@ -1611,8 +1799,8 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                     const maxW = parseFloat(item.maxWaveHeight ?? item.maxWaveHgt ?? item.max_wave_hgt ?? item.mwh);
                     let tmStr = String(item.obsTime ?? item.record_time ?? item.tm ?? item.obsDt ?? '');
                     let digits = tmStr.replace(/\D/g, '');
-                    let sortKey = digits.length >= 12 ? digits.substring(0, 12) : tmStr;
-                    let timeOnly = tmStr.length >= 16 ? tmStr.substring(11, 16) : (digits.length >= 12 ? `${digits.substring(8,10)}:${digits.substring(10,12)}` : '최신');
+                    let sortKey = digits.length >= 12 ? digits.substring(0, 12) : fallbackSortKey;
+                    let timeOnly = tmStr.length >= 16 ? tmStr.substring(11, 16) : (digits.length >= 12 ? `${digits.substring(8,10)}:${digits.substring(10,12)}` : fallbackTime);
 
                     let wStr = (!isNaN(ws) && ws >= 0 && ws < 80) ? ws.toFixed(1) : '-';
                     let dStr = (!isNaN(wd) && wd >= 0 && wd <= 360) ? degToDirection(wd) : '-';
@@ -1620,34 +1808,59 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                     let mWave = (!isNaN(maxW) && maxW >= 0 && maxW <= 30) ? maxW.toFixed(1) : '-';
 
                     if (wStr !== '-' || sWave !== '-') {
-                        let idx = stationHistoryMap[targetKey].findIndex(h => h.sortKey === sortKey && h.time === timeOnly);
-                        let entry = { sortKey: sortKey, time: timeOnly, wind: wStr, windDir: dStr, sigWave: sWave, maxWave: mWave };
-                        if (idx >= 0) stationHistoryMap[targetKey][idx] = entry;
-                        else stationHistoryMap[targetKey].push(entry);
+                        upsertStationHistory(targetKey, {
+                            sortKey: sortKey,
+                            time: timeOnly,
+                            wind: wStr,
+                            windDir: dStr,
+                            sigWave: sWave,
+                            maxWave: mWave
+                        });
                     }
                 });
             }
 
             const ws = parseFloat(kData.wind_speed);
             const wd = parseFloat(kData.wind_dir);
+            let latestWStr = '-';
+            let latestDStr = '-';
+            let latestSigStr = '-';
+            let latestMaxStr = '-';
+
             if (!isNaN(ws) && ws >= 0 && ws < 80) {
-                latestBuoyData[targetKey].wind = ws.toFixed(1);
-                latestBuoyData[targetKey].windDir = (!isNaN(wd) && wd >= 0) ? degToDirection(wd) : '-';
+                latestWStr = ws.toFixed(1);
+                latestDStr = (!isNaN(wd) && wd >= 0) ? degToDirection(wd) : '-';
+                latestBuoyData[targetKey].wind = latestWStr;
+                if (latestDStr !== '-') latestBuoyData[targetKey].windDir = latestDStr;
                 hasAnyData = true;
             }
 
             if (latestBuoyData[targetKey].sigWave !== null) {
                 const sigW = parseFloat(kData.sig_wave);
                 if (!isNaN(sigW) && sigW >= 0 && sigW <= 20) {
-                    latestBuoyData[targetKey].sigWave = sigW.toFixed(1);
+                    latestSigStr = sigW.toFixed(1);
+                    latestBuoyData[targetKey].sigWave = latestSigStr;
                     hasAnyData = true;
                 }
 
                 const maxW = parseFloat(kData.max_wave);
                 if (!isNaN(maxW) && maxW >= 0 && maxW <= 30) {
-                    latestBuoyData[targetKey].maxWave = maxW.toFixed(1);
+                    latestMaxStr = maxW.toFixed(1);
+                    latestBuoyData[targetKey].maxWave = latestMaxStr;
                     hasAnyData = true;
                 }
+            }
+
+            // rawItems가 비어있어도 kData 단건 최신값이 있으면 현재 10분 슬롯에 반드시 기록 보장
+            if (hasAnyData) {
+                upsertStationHistory(targetKey, {
+                    sortKey: fallbackSortKey,
+                    time: fallbackTime,
+                    wind: latestWStr,
+                    windDir: latestDStr,
+                    sigWave: latestSigStr,
+                    maxWave: latestMaxStr
+                });
             }
 
             return hasAnyData;
