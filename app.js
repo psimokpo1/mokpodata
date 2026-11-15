@@ -1163,18 +1163,23 @@ function buildWeatherNuriSummaryHtml(rawText) {
         return `<div style="padding:20px; text-align:center; color:#64748B;">현재 발효 중인 기상특보가 없거나 통보문을 수신 중입니다.</div>`;
     }
 
-    let latestFc = '';
-    let latestMainEf = '';
-    let latestAnyEf = '';
+    // 최신 본특보(주의보/경보) 레코드의 (TM_FC, TM_EF) 쌍을 우선 일치시켜 추출
+    let mainPair = null;
+    let anyPair = null;
 
     records.forEach(r => {
-        if (r.tmFc > latestFc) latestFc = r.tmFc;
-        if (r.tmEf > latestAnyEf) latestAnyEf = r.tmEf;
         const isPre = r.lvl.includes('예비') || r.cmd.includes('예비') || r.cmd === '2';
-        if (!isPre && r.tmEf > latestMainEf) latestMainEf = r.tmEf;
+        if (!anyPair || r.tmFc >= anyPair.tmFc) {
+            anyPair = { tmFc: r.tmFc, tmEf: r.tmEf };
+        }
+        if (!isPre) {
+            if (!mainPair || r.tmFc >= mainPair.tmFc) {
+                mainPair = { tmFc: r.tmFc, tmEf: r.tmEf };
+            }
+        }
     });
 
-    const displayEf = latestMainEf || latestAnyEf;
+    const activePair = mainPair || anyPair || { tmFc: '', tmEf: '' };
 
     const normalGroups = {};
     const pyungsuList = [];
@@ -1220,8 +1225,8 @@ function buildWeatherNuriSummaryHtml(rawText) {
 
     return `
         <div style="font-size:13px; color:#1E293B; margin-bottom:10px; padding-bottom:8px; border-bottom:1px solid #E2E8F0;">
-            <div><strong>발표시각</strong> : ${formatWarnTimestampKo(latestFc)}</div>
-            <div style="margin-top:3px;"><strong>발효시각</strong> : ${formatWarnTimestampKo(displayEf)} 이후</div>
+            <div><strong>발표시각</strong> : ${formatWarnTimestampKo(activePair.tmFc)}</div>
+            <div style="margin-top:3px;"><strong>발효시각</strong> : ${formatWarnTimestampKo(activePair.tmEf)} 이후</div>
         </div>
         <div style="background:#FFFFFF; border:1px solid #CBD5E1; border-radius:6px; padding:14px; max-height:310px; overflow-y:auto; font-size:13.5px; color:#1E293B;">
             ${bodyLinesHtml || '<div style="color:#64748B;">발효 중인 특보 내역이 없습니다.</div>'}
