@@ -1523,7 +1523,7 @@ function parseAwsTextData(textAws) {
 
         const wd1 = parseFloat(cols[2]);
         const ws1 = parseFloat(cols[3]);
-        const wss = cols.length >= 6 ? parseFloat(cols[5]) : -99; // 순간바람(GUST)
+        const wss = cols.length >= 6 ? parseFloat(cols[5]) : -99;
         const wd10 = cols.length >= 8 ? parseFloat(cols[6]) : -99;
         const ws10 = cols.length >= 8 ? parseFloat(cols[7]) : -99;
 
@@ -1572,7 +1572,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         const nowMs = Date.now();
         const shouldFetchNmpnt = (!isAuto) || (nowMs - lastNmpntFetchMs >= 10 * 60 * 1000);
 
-        // 1단계: 모바일 즉각 표출을 위해 최신 스냅샷만 초고속 수신
         const results = await Promise.allSettled([
             fetchKmaApi("buoy", authKey, 10000),
             fetchKmaApi("warn", authKey, 8000),
@@ -1602,7 +1601,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         let updatedCount = 0;
         let latestTsByKey = {};
 
-        // 1. 기상청 해양기상부이 기간조회(kma_buoy2.php: 과거 6시간 + WH_MAX 최대파고) + 파고부이/등표(sea_obs.php) 파싱
         if (textBuoy) {
             const targetBuoys = [
                 { id: '22183', key: '신안' },
@@ -1714,12 +1712,10 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             }
         }
 
-        // 2. 1단계 AWS 최신 스냅샷 즉시 파싱 (모바일 즉각 렌더링)
         if (textAwsNow) {
             updatedCount += parseAwsTextData(textAwsNow);
         }
 
-        // 3. 측위정보원 등대 (매 10분마다 수집 & 10분 단위 슬롯으로 누적 + 스마트 병합)
         const nmpntRaw = dataNmpnt?.result?.recordset || dataNmpnt?.recordset || dataNmpnt?.response?.body?.items?.item || dataNmpnt?.items || null;
         if (nmpntRaw) {
             lastNmpntFetchMs = nowMs;
@@ -1775,7 +1771,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             });
         }
 
-        // 4. 국립해양조사원 관측소 파싱 (추자, 가거초, 향화도, 서거차도, 우이도, 진도조위 + 스마트 병합)
         const parseKhoaStation = (resObj, targetKey) => {
             if (!resObj || !resObj.result || !resObj.result.data) return false;
             const kData = resObj.result.data;
@@ -1868,7 +1863,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         if (parseKhoaStation(dataKhoaUido, '우이도조사원')) updatedCount++;
         if (parseKhoaStation(dataKhoaJindo, '진도조위')) updatedCount++;
 
-        // 5. 특보 파싱 및 캐시 저장 후 화면 1차 즉시 렌더링
         if (textWarn) parseWeatherWarnings(textWarn);
         saveStationHistoryCache();
 
@@ -1880,7 +1874,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         }
         renderOperationBoard();
 
-        // 6. 2단계(백그라운드): AWS 3시간 이력 + 파고부이/해수서등표 6시간 정시 이력 조용히 병합
         fetchKmaApi("aws", authKey, 12000).then(textAwsHist => {
             if (textAwsHist) {
                 parseAwsTextData(textAwsHist);
@@ -1889,7 +1882,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             }
         }).catch(() => {});
 
-        // 파고부이/등표 이력이 3건 미만이거나 수동 새로고침일 때만 과거 6개 정시 이력 조회 (API 한도 절약)
         const needSeaObsBackfill = (!isAuto) || ['해수서파고', '진도파고', '조도파고', '맹골수도파고'].some(
             k => !Array.isArray(stationHistoryMap[k]) || stationHistoryMap[k].filter(h => isWithinLast6Hours(h.sortKey)).length < 3
         );
@@ -1979,8 +1971,58 @@ window.manualRefreshWeather = function() {
 };
 
 // ==========================================
-// 7. 선박 기초자료 UI 렌더링 & 모달 제어
+// 7. 선박 기초자료 UI 렌더링 & 모달 제어 (사진/버튼 자동 로드 보완)
 // ==========================================
+function loadVesselAssets(cleanName, uId, shipCode) {
+    const detail = document.getElementById(`detail-info-${uId}`);
+    if (!detail || detail.dataset.loaded === "true") return;
+    detail.dataset.loaded = "true";
+
+    let cleanNoHo = cleanName.replace(/호$/, '');
+    let override = cloudCustomData[shipCode] || {};
+    let customShip = customAddedShips.find(s => String(s.id).trim() === String(shipCode).trim());
+    let photoUrl = (override.images && override.images.photo)
+        || override.photo
+        || override.photoUrl
+        || (customShip && ((customShip.images && customShip.images.photo) || customShip.photo || customShip.photoUrl));
+
+    let imgEl = document.getElementById(`auto-img-${uId}`);
+    if (imgEl) {
+        if (photoUrl) {
+            imgEl.src = photoUrl;
+            imgEl.style.display = 'block';
+            imgEl.onclick = (e) => {
+                e.stopPropagation();
+                showImg(photoUrl, '선박 대표 사진', { type: 'photo', shipCode: shipCode, title: '대표 사진' });
+            };
+        } else {
+            loadAutoImg([cleanName + '_사진', cleanName, cleanNoHo + '_사진', cleanNoHo], `auto-img-${uId}`, shipCode);
+        }
+    }
+
+    smartBtnV2([cleanName + '_시간'], `btn-ann-${uId}`, '📅 기본시간표', shipCode);
+    smartBtnV2([cleanName + '_특수', cleanName + '_짝수'], `btn-spc-${uId}`, '🔢 특수일/짝수', shipCode);
+    smartBtnV2([cleanName + '_하'], `btn-sum-${uId}`, '☀️ 하절기', shipCode);
+    smartBtnV2([cleanName + '_동'], `btn-win-${uId}`, '❄️ 동절기', shipCode);
+    smartBtnV2([cleanName], `btn-map-${uId}`, '🗺️ 항로도(PATIS)', null);
+
+    let ruleBtns = [
+        { b: `rule-btn-1-${uId}`, base: cleanName + '_운규항로도' },
+        { b: `rule-btn-2-${uId}`, base: cleanName + '_운규항로도2' },
+        { b: `rule-btn-3-${uId}`, base: cleanName + '_운규항로도3' },
+        { b: `rule-btn-4-${uId}`, base: cleanName + '_운규항로도4' },
+        { b: `rule-btn-5-${uId}`, base: cleanName + '_운규항로도5' }
+    ];
+    smartGroupScan(ruleBtns, "📄 운항관리규정 항로도");
+
+    let carBtns = [
+        { b: `car-btn-1-${uId}`, base: cleanName + '_차량적재' },
+        { b: `car-btn-2-${uId}`, base: cleanName + '_차량적재2' },
+        { b: `car-btn-3-${uId}`, base: cleanName + '_차량적재3' }
+    ];
+    smartGroupScan(carBtns, "🚗 차량적재도 참고자료");
+}
+
 function render() {
     try {
         if (typeof baseShipData === 'undefined') return;
@@ -1991,7 +2033,7 @@ function render() {
         baseShipData.forEach((d, idx) => {
             let code = (d[1] || `idx_${idx}`).trim();
             let override = cloudCustomData[code] || {};
-            let photoUrl = (override.images && override.images.photo) || override.photo || null;
+            let photoUrl = (override.images && override.images.photo) || override.photo || override.photoUrl || null;
             allMap[code] = {
                 isCustom: false,
                 rawArray: d,
@@ -2014,7 +2056,7 @@ function render() {
 
         customAddedShips.forEach(s => {
             let code = String(s.id).trim();
-            let photoUrl = (s.images && s.images.photo) || s.photo || null;
+            let photoUrl = (s.images && s.images.photo) || s.photo || s.photoUrl || null;
             allMap[code] = {
                 isCustom: true,
                 code: code,
@@ -2068,14 +2110,14 @@ function render() {
 
         let fullHtml = "";
 
-        sortedRouteKeys.forEach(r => {
+        sortedRouteKeys.forEach((r, rIdx) => {
             let isReserveGroup = (r === '예비선');
             let groupHtml = `<div class="route-group"><div class="route-header ${isReserveGroup ? 'reserve' : ''}" onclick="toggleRoute(this.nextElementSibling)">📍 ${r} (${groups[r].length}척) <span>▼</span></div><div class="vessel-list">`;
 
             groups[r].forEach((v, idx) => {
                 let cleanName = (v.rawName || '').split('(')[0].split('\n')[0].trim().replace(/\s/g, '');
                 if (cleanName === "상동") cleanName = "도초카훼리";
-                let uId = cleanName + idx;
+                let uId = `${cleanName}_${rIdx}_${idx}`;
 
                 let deployedBadge = '';
                 let isOriginalReserve = (v.route || '').trim() === '예비선';
@@ -2101,18 +2143,18 @@ function render() {
                 let ttButtonsHtml = "";
                 if (v.timetables && v.timetables.length > 0) {
                     v.timetables.forEach((tt, tIdx) => {
-                        if (tt.title && tt.imgData) ttButtonsHtml += `<div class="btn-dynamic-tt" onclick="showImg('${tt.imgData}', '${tt.title}', { type: 'timetable', shipCode: '${v.code}', ttIndex: ${tIdx}, title: '${tt.title}' })">📅 ${tt.title}</div>`;
+                        if (tt.title && tt.imgData) ttButtonsHtml += `<div class="btn-dynamic-tt" style="display:block;" onclick="showImg('${tt.imgData}', '${tt.title}', { type: 'timetable', shipCode: '${v.code}', ttIndex: ${tIdx}, title: '${tt.title}' })">📅 ${tt.title}</div>`;
                     });
                 }
 
                 let deployBtnHtml = isOriginalReserve ? `<button class="btn-action btn-deploy-act" onclick="openDeployModal('${v.code}')">🚢 대체투입 설정</button>` : '';
 
                 groupHtml += `<div class="vessel-card ${isReserveGroup ? 'reserve' : ''} ${v.deployedTarget ? 'deployed' : ''} ${v.isHidden ? 'is-hidden' : ''}">
-                    <div class="vessel-header" onclick="toggleVessel(this, '${cleanName}', '${uId}', '${v.code}')">
+                    <div class="vessel-header" data-cleanname="${cleanName}" data-uid="${uId}" data-shipcode="${v.code}" onclick="toggleVessel(this, '${cleanName}', '${uId}', '${v.code}')">
                         <div class="vessel-name">${vNameHTML} ${deployedBadge} ${v.isHidden ? '<span class="badge-hidden">선박 숨김</span>' : ''}</div>
                         <div style="font-size:12px; color:#999;">▼</div>
                     </div>
-                    <div class="detail-info">
+                    <div id="detail-info-${uId}" class="detail-info">
                         <img id="auto-img-${uId}" style="display:none; width:100%; height:auto; border-radius:8px; margin-bottom:15px; box-shadow:0 2px 5px rgba(0,0,0,0.1); cursor:pointer;">
                         <table>
                             <tr><td class="label">선박코드</td><td>${v.code || '-'}</td></tr>
@@ -2158,7 +2200,16 @@ function render() {
         });
 
         const mainListEl = document.getElementById('mainList');
-        if (mainListEl) mainListEl.innerHTML = fullHtml;
+        if (mainListEl) {
+            mainListEl.innerHTML = fullHtml;
+            // 초기 렌더링 시 이미 펼쳐져 있는 상세 영역의 사진과 버튼 즉시 로드
+            document.querySelectorAll('.vessel-header[data-uid]').forEach(hdr => {
+                const detailEl = hdr.nextElementSibling;
+                if (detailEl && getComputedStyle(detailEl).display !== 'none') {
+                    loadVesselAssets(hdr.dataset.cleanname, hdr.dataset.uid, hdr.dataset.shipcode);
+                }
+            });
+        }
     } catch (e) {
         console.error("render() 예외 발생:", e);
     }
@@ -2278,7 +2329,18 @@ window.deleteRefItem = async function(id) {
     } catch (err) { alert("삭제 실패: " + err.message); }
 };
 
-window.toggleRoute = function(listEl) { listEl.style.display = (listEl.style.display === 'block') ? 'none' : 'block'; };
+window.toggleRoute = function(listEl) {
+    const isOpening = (listEl.style.display !== 'block');
+    listEl.style.display = isOpening ? 'block' : 'none';
+    if (isOpening) {
+        listEl.querySelectorAll('.vessel-header[data-uid]').forEach(hdr => {
+            const detailEl = hdr.nextElementSibling;
+            if (detailEl && getComputedStyle(detailEl).display !== 'none') {
+                loadVesselAssets(hdr.dataset.cleanname, hdr.dataset.uid, hdr.dataset.shipcode);
+            }
+        });
+    }
+};
 window.toggleRefGroup = function(listEl) { listEl.style.display = (listEl.style.display === 'block') ? 'none' : 'block'; };
 
 window.toggleVessel = function(headerEl, cleanName, uId, shipCode) {
@@ -2286,43 +2348,8 @@ window.toggleVessel = function(headerEl, cleanName, uId, shipCode) {
     let isOpening = (detail.style.display !== 'block');
     detail.style.display = isOpening ? 'block' : 'none';
 
-    if (isOpening && !detail.dataset.loaded) {
-        detail.dataset.loaded = "true";
-        let cleanNoHo = cleanName.replace(/호$/, '');
-        let override = cloudCustomData[shipCode] || {};
-        let customShip = customAddedShips.find(s => s.id === shipCode);
-        let photoUrl = (override.images && override.images.photo) || override.photo || (customShip && (customShip.images ? customShip.images.photo : customShip.photo));
-
-        let imgEl = document.getElementById(`auto-img-${uId}`);
-        if (photoUrl) {
-            imgEl.src = photoUrl;
-            imgEl.style.display = 'block';
-            imgEl.onclick = (e) => { e.stopPropagation(); showImg(photoUrl, '선박 대표 사진', { type: 'photo', shipCode: shipCode, title: '대표 사진' }); };
-        } else {
-            loadAutoImg([cleanName + '_사진', cleanName, cleanNoHo + '_사진', cleanNoHo], `auto-img-${uId}`, shipCode);
-        }
-
-        smartBtnV2([cleanName + '_시간'], `btn-ann-${uId}`, '📅 기본시간표', shipCode);
-        smartBtnV2([cleanName + '_특수', cleanName + '_짝수'], `btn-spc-${uId}`, '🔢 특수일/짝수', shipCode);
-        smartBtnV2([cleanName + '_하'], `btn-sum-${uId}`, '☀️ 하절기', shipCode);
-        smartBtnV2([cleanName + '_동'], `btn-win-${uId}`, '❄️ 동절기', shipCode);
-        smartBtnV2([cleanName], `btn-map-${uId}`, '🗺️ 항로도(PATIS)', null);
-
-        let ruleBtns = [
-            {b: `rule-btn-1-${uId}`, base: cleanName + '_운규항로도'},
-            {b: `rule-btn-2-${uId}`, base: cleanName + '_운규항로도2'},
-            {b: `rule-btn-3-${uId}`, base: cleanName + '_운규항로도3'},
-            {b: `rule-btn-4-${uId}`, base: cleanName + '_운규항로도4'},
-            {b: `rule-btn-5-${uId}`, base: cleanName + '_운규항로도5'}
-        ];
-        smartGroupScan(ruleBtns, "📄 운항관리규정 항로도");
-
-        let carBtns = [
-            {b: `car-btn-1-${uId}`, base: cleanName + '_차량적재'},
-            {b: `car-btn-2-${uId}`, base: cleanName + '_차량적재2'},
-            {b: `car-btn-3-${uId}`, base: cleanName + '_차량적재3'}
-        ];
-        smartGroupScan(carBtns, "🚗 차량적재도 참고자료");
+    if (isOpening) {
+        loadVesselAssets(cleanName, uId, shipCode);
     }
 };
 
@@ -2367,11 +2394,11 @@ function smartGroupScan(btnGroup, baseText) {
         let list = results.filter(r => r.exists);
         if (list.length === 1) {
             let r = list[0]; let b = document.getElementById(r.item.b);
-            b.innerText = baseText; b.style.display = 'block'; b.onclick = () => showImg(r.path, baseText, null);
+            if (b) { b.innerText = baseText; b.style.display = 'block'; b.onclick = () => showImg(r.path, baseText, null); }
         } else if (list.length > 1) {
             list.forEach((r, idx) => {
                 let b = document.getElementById(r.item.b);
-                b.innerText = baseText + " " + (idx + 1); b.style.display = 'block'; b.onclick = () => showImg(r.path, baseText + " " + (idx + 1), null);
+                if (b) { b.innerText = baseText + " " + (idx + 1); b.style.display = 'block'; b.onclick = () => showImg(r.path, baseText + " " + (idx + 1), null); }
             });
         }
     });
@@ -2526,7 +2553,15 @@ window.openEditModal = (shipCode) => {
         document.getElementById('edit-notes').value = custom.notes || '';
     }
 
-    document.getElementById('timetables-container').innerHTML = '';
+    const ttContainer = document.getElementById('timetables-container');
+    ttContainer.innerHTML = '';
+    let existingTts = currentData.timetables || (custom && custom.timetables) || [];
+    existingTts.forEach(tt => {
+        if (tt && (tt.title || tt.imgData)) {
+            addTimetableRow(tt.title || '', tt.imgData || null);
+        }
+    });
+
     const customContainer = document.getElementById('custom-fields-container');
     customContainer.innerHTML = '';
     let fields = currentData.customFields || (custom && custom.customFields) || [];
@@ -2548,7 +2583,7 @@ window.saveVesselUpdate = async () => {
     try {
         let current = cloudCustomData[code] || customAddedShips.find(s => s.id === code) || {};
         let imagesMap = current.images || {};
-        let timetables = current.timetables || [];
+        let timetables = [];
 
         const photoFile = document.getElementById('upload-ship-photo').files[0];
         if (photoFile) imagesMap.photo = await processImageFile(photoFile);
@@ -2557,9 +2592,12 @@ window.saveVesselUpdate = async () => {
         for (let row of ttRows) {
             let title = row.querySelector('.tt-row-title').value.trim();
             let file = row.querySelector('.tt-file-input').files[0];
+            let existingImg = row.dataset.existingImg || '';
             if (title && file) {
                 let imgData = await processImageFile(file, 1400, 0.8);
                 timetables.push({ title: title, imgData: imgData });
+            } else if (title && existingImg) {
+                timetables.push({ title: title, imgData: existingImg });
             }
         }
 
