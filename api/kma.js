@@ -1,4 +1,4 @@
-// api/kma.js (기상청 해양기상부이 kma_buoy2 + 파고부이/등표 sea_obs + AWS 즉시/3시간 분리 + 기상특보 + 날씨누리 실시간 특보지도 프록시)
+// api/kma.js (기상청 해양기상부이 kma_buoy2 + 파고부이/등표 sea_obs + 정시 과거이력 sea_obs_hist + AWS 즉시/3시간 분리 + 기상특보 + 날씨누리 특보지도 프록시)
 export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -21,12 +21,25 @@ export default async function handler(req, res) {
         return `${yyyy}${mm}${dd}${hh}${min}`;
     };
 
+    const fetchWithTimeoutServer = async (url, options = {}, timeoutMs = 5000) => {
+        const controller = new AbortController();
+        const id = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            const response = await fetch(url, { ...options, signal: controller.signal, cache: 'no-store' });
+            clearTimeout(id);
+            return response;
+        } catch (err) {
+            clearTimeout(id);
+            throw err;
+        }
+    };
+
     const tm2 = formatKst(kstNow);
     const tm1_6h = formatKst(kst6hAgo);
     const tm1_3h = formatKst(kst3hAgo);
 
     try {
-        // 1. 기상청 날씨누리 실시간 특보 발효현황 지도 이미지 프록시 (Referer 헤더 및 최신 이미지 경로 탐색)
+        // 1. 기상청 날씨누리 실시간 특보 발효현황 지도 이미지 프록시
         if (type === 'warn_img') {
             const kmaHeaders = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -40,10 +53,9 @@ export default async function handler(req, res) {
                 `https://www.weather.go.kr/w/repositary/xml/wrn/img/KOR_wrn_now.png?_t=${nowUtc}`
             ];
 
-            // 최신 발표시각(TM_FC) 기반 이미지 파일명(wrn_now_data_YYYYMMDDHHMM.png) 동적 탐색 추가
             try {
                 const warnUrl = `https://apihub.kma.go.kr/api/typ01/url/wrn_now_data.php?fe=f&tm=&disp=0&help=0&authKey=${cleanKey}`;
-                const warnRes = await fetch(warnUrl, { headers: { 'User-Agent': 'Mozilla/5.0' }, cache: 'no-store' });
+                const warnRes = await fetchWithTimeoutServer(warnUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }, 4000);
                 if (warnRes.ok) {
                     const wBuf = await warnRes.arrayBuffer();
                     const wText = new TextDecoder('euc-kr').decode(wBuf);
@@ -70,7 +82,7 @@ export default async function handler(req, res) {
 
             for (const imgUrl of imgCandidates) {
                 try {
-                    const imgRes = await fetch(imgUrl, { headers: kmaHeaders, cache: 'no-store' });
+                    const imgRes = await fetchWithTimeoutServer(imgUrl, { headers: kmaHeaders }, 4000);
                     const cType = imgRes.headers.get('content-type') || '';
                     if (imgRes.ok && cType.startsWith('image/')) {
                         const buf = Buffer.from(await imgRes.arrayBuffer());
@@ -85,14 +97,14 @@ export default async function handler(req, res) {
             return res.status(404).end();
         }
 
-        // 2. 해양기상부이(kma_buoy2) + 파고부이/등표(sea_obs) 기간조회
+        // 2. 해양기상부이(kma_buoy2) 6시간 + 파고부이/등표(sea_obs) 최신 1건 즉시 조회
         if (type === 'buoy') {
             const buoy2Url = `https://apihub.kma.go.kr/api/typ01/url/kma_buoy2.php?tm1=${tm1_6h}&tm2=${tm2}&stn=0&help=1&authKey=${cleanKey}`;
-            const seaObsUrl = `https://apihub.kma.go.kr/api/typ01/url/sea_obs.php?tm1=${tm1_6h}&tm2=${tm2}&stn=0&help=0&authKey=${cleanKey}`;
+            const seaObsUrl = `https://apihub.kma.go.kr/api/typ01/url/sea_obs.php?tm=${tm2}&stn=0&help=0&authKey=${cleanKey}`;
 
             const [resBuoy2, resSea] = await Promise.allSettled([
-                fetch(buoy2Url, { headers: { 'User-Agent': 'Mozilla/5.0' }, cache: 'no-store' }),
-                fetch(seaObsUrl, { headers: { 'User-Agent': 'Mozilla/5.0' }, cache: 'no-store' })
+                fetchWithTimeoutServer(buoy2Url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, 8000),
+                fetchWithTimeoutServer(seaObsUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }, 6000)
             ]);
 
             const decoder = new TextDecoder('euc-kr');
@@ -114,6 +126,36 @@ export default async function handler(req, res) {
             return res.status(200).send(combined);
         }
 
+        // 2-1. 파고부이/등표(sea_obs.php) 과거 6시간 정시(00분) 백그라운드 병렬 수집
+        if (type === 'sea_obs_hist') {
+            const decoder = new TextDecoder('euc-kr');
+            const hourlyPromises = [];
+
+            // 현재 정시(0h 전)부터 6시간 전 정시까지 총 7개 정시 슬롯 병렬 요청 (개별 5초 타임아웃)
+            for (let hOffset = 0; hOffset <= 6; hOffset++) {
+                const targetKst = new Date(nowUtc + 9 * 60 * 60 * 1000 - hOffset * 60 * 60 * 1000);
+                const yyyy = targetKst.getUTCFullYear();
+                const mm = String(targetKst.getUTCMonth() + 1).padStart(2, '0');
+                const dd = String(targetKst.getUTCDate()).padStart(2, '0');
+                const hh = String(targetKst.getUTCHours()).padStart(2, '0');
+                const tmHour = `${yyyy}${mm}${dd}${hh}00`;
+
+                const url = `https://apihub.kma.go.kr/api/typ01/url/sea_obs.php?tm=${tmHour}&stn=0&help=0&authKey=${cleanKey}`;
+                hourlyPromises.push(
+                    fetchWithTimeoutServer(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, 5000)
+                        .then(async (r) => (r.ok ? decoder.decode(await r.arrayBuffer()) : ''))
+                        .catch(() => '')
+                );
+            }
+
+            const results = await Promise.all(hourlyPromises);
+            const mergedSeaText = results.filter(Boolean).join('\n');
+
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            return res.status(200).send(mergedSeaText);
+        }
+
         // 3. AWS(즉시 스냅샷 / 최근 3시간 이력) 및 기상특보 전문
         let targetUrl = '';
         if (type === 'aws_now') {
@@ -124,10 +166,9 @@ export default async function handler(req, res) {
             targetUrl = `https://apihub.kma.go.kr/api/typ01/url/wrn_now_data.php?fe=f&tm=&disp=0&help=0&authKey=${cleanKey}`;
         }
 
-        const response = await fetch(targetUrl, {
-            headers: { 'User-Agent': 'Mozilla/5.0' },
-            cache: 'no-store'
-        });
+        const response = await fetchWithTimeoutServer(targetUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0' }
+        }, 8000);
 
         const arrayBuffer = await response.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
