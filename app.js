@@ -122,7 +122,6 @@ function isWithinLast6Hours(sortKey) {
     const itemUtcMs = parseSortKeyToUtcMs(sortKey);
     if (isNaN(itemUtcMs)) return false;
     const diffMs = Date.now() - itemUtcMs;
-    // 최근 6시간 + 30분 버퍼(직전 슬롯 이어받기용)까지 안전하게 보존
     return diffMs >= -15 * 60 * 1000 && diffMs <= (6 * 60 + 30) * 60 * 1000;
 }
 
@@ -130,7 +129,6 @@ function isValidMetric(val) {
     return val !== undefined && val !== null && val !== '-' && val !== '' && !isNaN(parseFloat(val));
 }
 
-// 기존 이력에 새 데이터를 덮어쓰지 않고 유효 필드만 정밀 병합(Smart Merge)
 function upsertStationHistory(stKey, entry) {
     if (!stKey || !entry || !entry.sortKey) return;
     const digits = String(entry.sortKey).replace(/\D/g, '');
@@ -176,7 +174,6 @@ function upsertStationHistory(stKey, entry) {
     }
 }
 
-// 앱 시작/새로고침 시 캐시 즉시 복원 및 latestBuoyData 초기 하이드레이션
 function loadStationHistoryCache() {
     try {
         const saved = localStorage.getItem(HISTORY_CACHE_KEY) || localStorage.getItem('komsa_station_history_v1');
@@ -189,7 +186,6 @@ function loadStationHistoryCache() {
                         .sort((a, b) => String(a.sortKey).localeCompare(String(b.sortKey)));
                     stationHistoryMap[k] = validRows;
 
-                    // 캐시된 가장 최신 값을 latestBuoyData에 미리 반영 (새로고침 직후 '-' 공백 방지)
                     if (validRows.length > 0 && latestBuoyData[k]) {
                         const last = validRows[validRows.length - 1];
                         if (latestBuoyData[k].wind !== null && isValidMetric(last.wind)) {
@@ -219,7 +215,6 @@ function saveStationHistoryCache() {
     try {
         for (let k in stationHistoryMap) {
             if (Array.isArray(stationHistoryMap[k])) {
-                // 중복 sortKey 제거 후 6시간 내 데이터만 시간순 정렬 유지
                 const dedupMap = {};
                 stationHistoryMap[k].forEach(item => {
                     if (!isWithinLast6Hours(item.sortKey)) return;
@@ -233,7 +228,6 @@ function saveStationHistoryCache() {
     } catch (e) {}
 }
 
-// 모달 표출용 연속 타임라인 생성기 (수신 누락 구간 10분 단위 직전 유효값 보정 지원)
 function buildContinuousHistoryForModal(stKey) {
     const rawList = (stationHistoryMap[stKey] || [])
         .filter(h => isWithinLast6Hours(h.sortKey))
@@ -243,7 +237,6 @@ function buildContinuousHistoryForModal(stKey) {
 
     const stData = latestBuoyData[stKey];
     const isBuoyOrWaveBuoy = stData && (stData.type === 'buoy' || stData.type === 'wavebuoy' || stData.type === 'beacon');
-    // 기상청 해양기상부이/파고부이는 정시(1시간) 단위 원시 데이터이므로 원시 이력 그대로 표출
     if (isBuoyOrWaveBuoy) {
         return rawList.filter(h => {
             const diff = Date.now() - parseSortKeyToUtcMs(h.sortKey);
@@ -251,12 +244,10 @@ function buildContinuousHistoryForModal(stKey) {
         });
     }
 
-    // AWS / 측위정보원 / 해양조사원은 10분 단위 슬롯으로 빈 구간을 직전 유효 관측값과 부드럽게 연결
     const tenMinMs = 10 * 60 * 1000;
     const nowFlooredMs = Math.floor(Date.now() / tenMinMs) * tenMinMs;
     const sixHoursAgoMs = nowFlooredMs - 6 * 60 * 60 * 1000;
 
-    // 10분 단위 버킷에 실제 관측 데이터 매핑
     const bucketMap = {};
     rawList.forEach(item => {
         const ms = parseSortKeyToUtcMs(item.sortKey);
@@ -1178,7 +1169,7 @@ function renderOperationBoard() {
 }
 
 // ==========================================
-// 5. 기상특보 파싱 및 통신 엔진 (AWS 2단계 분리 + 날씨누리 스타일 특보 모달)
+// 5. 기상특보 파싱 및 통신 엔진 (AWS 2단계 분리 + sea_obs 정시 백그라운드 수집 + 날씨누리 특보 모달)
 // ==========================================
 function setSeaWarningByLatestFc(seaKey, alertType, fcTimeNum) {
     let prevFc = seaWarningTimestamps[seaKey] || 0;
@@ -1197,7 +1188,6 @@ function parseKmaWarnRecords(rawText) {
         const l = line.trim();
         if (!l || l.startsWith('#')) return;
         const cols = l.split(',').map(c => c.trim());
-        // wrn_now_data.php 컬럼: [0]REG_UP [1]REG_UP_KO [2]REG_ID [3]REG_KO [4]TM_FC [5]TM_EF [6]WRN [7]LVL [8]CMD [9]ED_TM
         if (cols.length >= 8) {
             const cmd = cols[8] || '';
             if (cmd.includes('해제') || cmd === '3') return;
@@ -1227,7 +1217,6 @@ function parseWeatherWarnings(rawText) {
 
     const nowMs = Date.now();
 
-    // 1) wrn_now_data.php CSV 형식 파싱 우선 처리
     const csvRecords = parseKmaWarnRecords(rawText);
     if (csvRecords.length > 0) {
         csvRecords.forEach(rec => {
@@ -1266,7 +1255,6 @@ function parseWeatherWarnings(rawText) {
                 else alertType = '풍랑예비특보';
             }
 
-            // 반드시 상위 해역명(서해남부 / 남해서부 / 제주도)까지 일치할 때만 매핑
             if (fullReg.includes('서해남부') && regKo.includes('전남북부')) {
                 setSeaWarningByLatestFc('서해남부앞바다(전남북부)', alertType, fcTimeNum);
             } else if (fullReg.includes('서해남부') && regKo.includes('전남중부')) {
@@ -1286,7 +1274,6 @@ function parseWeatherWarnings(rawText) {
         return;
     }
 
-    // 2) JSON / 일반 텍스트 폴백
     try {
         let data = JSON.parse(rawText);
         let items = Array.isArray(data) ? data : (data.items || data.result || []);
@@ -1333,7 +1320,6 @@ function buildWeatherNuriSummaryHtml(rawText) {
         return `<div style="padding:20px; text-align:center; color:#64748B;">현재 발효 중인 기상특보가 없거나 통보문을 수신 중입니다.</div>`;
     }
 
-    // 최신 본특보(주의보/경보) 레코드의 (TM_FC, TM_EF) 쌍을 우선 일치시켜 추출
     let mainPair = null;
     let anyPair = null;
 
@@ -1446,6 +1432,68 @@ async function fetchKmaApi(type, authKey, timeoutMs = 12000) {
     }
 }
 
+// sea_obs.php 텍스트 파싱 공용 헬퍼 (파고부이 3개소 + 해수서 등표)
+function parseSeaObsTextData(blockText, latestTsByKey = {}) {
+    if (!blockText) return 0;
+    const targetSeaObs = [
+        { id: '22500', key: '조도파고' },
+        { id: '22481', key: '맹골수도파고' },
+        { id: '22449', key: '진도파고' },
+        { id: '959',   key: '해수서파고' }
+    ];
+
+    let count = 0;
+    const lines = blockText.split('\n');
+    lines.forEach(line => {
+        line = line.trim();
+        if (!line || line.startsWith('#')) return;
+        const cols = line.includes(',') ? line.split(',').map(c => c.trim()) : line.split(/\s+/);
+        if (cols.length < 9) return;
+
+        const tmStr = cols[1] || '';
+        const timeOnly = tmStr.length >= 12 ? `${tmStr.substring(8,10)}:${tmStr.substring(10,12)}` : '최신';
+        const stnId = cols[2];
+
+        targetSeaObs.forEach(tb => {
+            if (stnId === tb.id) {
+                let rawWh = parseFloat(cols[6]);
+                let rawWd = parseFloat(cols[7]);
+                let rawWs = parseFloat(cols[8]);
+
+                let wVal = (!isNaN(rawWs) && rawWs >= 0 && rawWs < 50.0) ? rawWs.toFixed(1) : '-';
+                let dVal = (!isNaN(rawWd) && rawWd >= 0 && rawWd <= 360) ? degToDirection(rawWd) : '-';
+                let whVal = (!isNaN(rawWh) && rawWh >= 0.0 && rawWh <= 15.0) ? rawWh.toFixed(1) : '-';
+
+                if (wVal !== '-' || whVal !== '-') {
+                    upsertStationHistory(tb.key, {
+                        sortKey: tmStr,
+                        time: timeOnly,
+                        wind: wVal,
+                        windDir: dVal,
+                        sigWave: whVal,
+                        maxWave: '-'
+                    });
+                }
+
+                if (!latestTsByKey[tb.key] || tmStr >= latestTsByKey[tb.key]) {
+                    latestTsByKey[tb.key] = tmStr;
+                    if (latestBuoyData[tb.key].wind !== null && wVal !== '-') {
+                        latestBuoyData[tb.key].wind = wVal;
+                        if (dVal !== '-') latestBuoyData[tb.key].windDir = dVal;
+                        count++;
+                    }
+                    if (whVal !== '-') {
+                        latestBuoyData[tb.key].sigWave = whVal;
+                        if (latestBuoyData[tb.key].wind === null || wVal === '-') count++;
+                    }
+                }
+            }
+        });
+    });
+
+    return count;
+}
+
 // AWS 텍스트 파싱 헬퍼 (1단계 즉시 스냅샷 & 2단계 최근 3시간 이력 공용 + 스마트 병합 적용)
 function parseAwsTextData(textAws) {
     if (!textAws) return 0;
@@ -1524,9 +1572,9 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         const nowMs = Date.now();
         const shouldFetchNmpnt = (!isAuto) || (nowMs - lastNmpntFetchMs >= 10 * 60 * 1000);
 
-        // 1단계: 모바일 즉각 표출을 위해 AWS는 최신 스냅샷(aws_now)만 초고속 수신
+        // 1단계: 모바일 즉각 표출을 위해 최신 스냅샷만 초고속 수신
         const results = await Promise.allSettled([
-            fetchKmaApi("buoy", authKey, 12000),
+            fetchKmaApi("buoy", authKey, 10000),
             fetchKmaApi("warn", authKey, 8000),
             fetchKmaApi("aws_now", authKey, 6000),
             shouldFetchNmpnt
@@ -1552,6 +1600,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         const dataKhoaJindo = results[9].status === 'fulfilled' ? results[9].value : null;
 
         let updatedCount = 0;
+        let latestTsByKey = {};
 
         // 1. 기상청 해양기상부이 기간조회(kma_buoy2.php: 과거 6시간 + WH_MAX 최대파고) + 파고부이/등표(sea_obs.php) 파싱
         if (textBuoy) {
@@ -1573,8 +1622,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                     stationHistoryMap[wbKey] = stationHistoryMap[wbKey].filter(h => parseFloat(h.sigWave) > 0);
                 }
             });
-
-            let latestTsByKey = {};
 
             const parseBuoy2Block = (blockText) => {
                 if (!blockText || blockText.includes('UNAUTHORIZED') || blockText.includes('DENIED') || blockText.includes('ERROR')) return;
@@ -1656,65 +1703,14 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                 });
             };
 
-            const parseSeaObsBlock = (blockText) => {
-                if (!blockText) return;
-                const lines = blockText.split('\n');
-                lines.forEach(line => {
-                    line = line.trim();
-                    if (!line || line.startsWith('#')) return;
-                    const cols = line.includes(',') ? line.split(',').map(c => c.trim()) : line.split(/\s+/);
-                    if (cols.length < 9) return;
-
-                    const tmStr = cols[1] || '';
-                    const timeOnly = tmStr.length >= 12 ? `${tmStr.substring(8,10)}:${tmStr.substring(10,12)}` : '최신';
-                    const stnId = cols[2];
-
-                    targetBuoys.forEach(tb => {
-                        if (stnId === tb.id) {
-                            let rawWh = parseFloat(cols[6]);
-                            let rawWd = parseFloat(cols[7]);
-                            let rawWs = parseFloat(cols[8]);
-
-                            let wVal = (!isNaN(rawWs) && rawWs >= 0 && rawWs < 50.0) ? rawWs.toFixed(1) : '-';
-                            let dVal = (!isNaN(rawWd) && rawWd >= 0 && rawWd <= 360) ? degToDirection(rawWd) : '-';
-                            let whVal = (!isNaN(rawWh) && rawWh >= 0.0 && rawWh <= 15.0) ? rawWh.toFixed(1) : '-';
-
-                            if (wVal !== '-' || whVal !== '-') {
-                                upsertStationHistory(tb.key, {
-                                    sortKey: tmStr,
-                                    time: timeOnly,
-                                    wind: wVal,
-                                    windDir: dVal,
-                                    sigWave: whVal,
-                                    maxWave: '-'
-                                });
-                            }
-
-                            if (!latestTsByKey[tb.key] || tmStr > latestTsByKey[tb.key]) {
-                                latestTsByKey[tb.key] = tmStr;
-                                if (latestBuoyData[tb.key].wind !== null && wVal !== '-') {
-                                    latestBuoyData[tb.key].wind = wVal;
-                                    if (dVal !== '-') latestBuoyData[tb.key].windDir = dVal;
-                                    updatedCount++;
-                                }
-                                if (whVal !== '-') {
-                                    latestBuoyData[tb.key].sigWave = whVal;
-                                    if (latestBuoyData[tb.key].wind === null || wVal === '-') updatedCount++;
-                                }
-                            }
-                        }
-                    });
-                });
-            };
-
             if (textBuoy.includes('===BUOY2_START===')) {
                 const parts = textBuoy.split('===SEAOBS_START===');
                 const buoy2Part = parts[0].replace('===BUOY2_START===', '');
                 const seaPart = parts[1] || '';
                 parseBuoy2Block(buoy2Part);
-                parseSeaObsBlock(seaPart);
+                updatedCount += parseSeaObsTextData(seaPart, latestTsByKey);
             } else {
-                parseSeaObsBlock(textBuoy);
+                updatedCount += parseSeaObsTextData(textBuoy, latestTsByKey);
             }
         }
 
@@ -1851,7 +1847,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                 }
             }
 
-            // rawItems가 비어있어도 kData 단건 최신값이 있으면 현재 10분 슬롯에 반드시 기록 보장
             if (hasAnyData) {
                 upsertStationHistory(targetKey, {
                     sortKey: fallbackSortKey,
@@ -1885,7 +1880,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         }
         renderOperationBoard();
 
-        // 6. 2단계(백그라운드): AWS 최근 3시간(10분 간격) 과거 이력만 조용히 수집하여 캐시에 병합
+        // 6. 2단계(백그라운드): AWS 3시간 이력 + 파고부이/해수서등표 6시간 정시 이력 조용히 병합
         fetchKmaApi("aws", authKey, 12000).then(textAwsHist => {
             if (textAwsHist) {
                 parseAwsTextData(textAwsHist);
@@ -1893,6 +1888,20 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                 renderOperationBoard();
             }
         }).catch(() => {});
+
+        // 파고부이/등표 이력이 3건 미만이거나 수동 새로고침일 때만 과거 6개 정시 이력 조회 (API 한도 절약)
+        const needSeaObsBackfill = (!isAuto) || ['해수서파고', '진도파고', '조도파고', '맹골수도파고'].some(
+            k => !Array.isArray(stationHistoryMap[k]) || stationHistoryMap[k].filter(h => isWithinLast6Hours(h.sortKey)).length < 3
+        );
+        if (needSeaObsBackfill) {
+            fetchKmaApi("sea_obs_hist", authKey, 12000).then(textSeaHist => {
+                if (textSeaHist) {
+                    parseSeaObsTextData(textSeaHist, latestTsByKey);
+                    saveStationHistoryCache();
+                    renderOperationBoard();
+                }
+            }).catch(() => {});
+        }
 
     } catch (err) {
         console.error("수신 전체 실패:", err);
