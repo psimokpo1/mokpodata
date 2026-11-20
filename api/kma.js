@@ -1,12 +1,13 @@
-// api/kma.js (해양기상부이 kma_buoy2 + 파고부이/등표 sea_obs + 정시 과거이력 sea_obs_hist + AWS 초고속 스냅샷/과거 3정시 + 기상특보 이중수신 + 날씨누리 실시간 특보지도 프록시)
+// api/kma.js (해양기상부이 kma_buoy2 + 파고부이/등표 sea_obs + 정시 과거이력 sea_obs_hist + AWS 초고속 스냅샷/과거 3정시 + 기상특보 이중수신 + 기상청 원문 특보지도 프록시)
 export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
     if (req.method === 'OPTIONS') return res.status(200).end();
 
-    const { type = 'buoy', authKey = 's0C3VEw6ScOAt1RMOinDFQ', tmFc = '' } = req.query;
+    const { type = 'buoy', authKey = 's0C3VEw6ScOAt1RMOinDFQ', tmFc = '', tmEf = '' } = req.query;
     const cleanKey = String(authKey).trim();
     const cleanTmFc = String(tmFc).replace(/\D/g, '').substring(0, 12);
+    const cleanTmEf = String(tmEf).replace(/\D/g, '').substring(0, 12);
 
     const nowUtc = Date.now();
     const kstNow = new Date(nowUtc + 9 * 60 * 60 * 1000);
@@ -44,46 +45,43 @@ export default async function handler(req, res) {
     const tm1_6h = formatKst(kst6hAgo);
 
     try {
-        // 1. 기상청 날씨누리 실시간 특보 발효현황 지도 이미지 프록시
+        // 1. 기상청 원문 특보 발효현황 지도 이미지 프록시 (API허브 공식 이미지 API + 날씨누리 실제 발효시각/전남관할 이미지 경로)
         if (type === 'warn_img') {
             const imgCandidates = [];
 
+            // 1순위: 기상청 API허브 공식 특보현황 지도 이미지 API
+            imgCandidates.push(
+                `https://apihub.kma.go.kr/api/typ01/url/wrn_now_img.php?fe=f&tm=&authKey=${cleanKey}`,
+                `https://apihub.kma.go.kr/api/typ01/url/wrn_img.php?fe=f&tm=&authKey=${cleanKey}`
+            );
+
+            // 2순위: 기상청 날씨누리 실제 저장소 이미지 경로 (발효시각 tmEf / 발표시각 tmFc / 전남 JN_ / 최신 고정파일)
+            if (cleanTmEf.length >= 12) {
+                imgCandidates.push(
+                    `https://www.weather.go.kr/w/repositary/xml/wrn/img/wrn_now_data_${cleanTmEf}.png`,
+                    `https://www.weather.go.kr/w/repositary/xml/wrn/img/JN_${cleanTmEf}.png`
+                );
+            }
             if (cleanTmFc.length >= 12) {
                 imgCandidates.push(
                     `https://www.weather.go.kr/w/repositary/xml/wrn/img/wrn_now_data_${cleanTmFc}.png`,
-                    `https://www.weather.go.kr/w/repositary/xml/wrn/img/JN_wrn_now_${cleanTmFc}.png`,
-                    `https://www.weather.go.kr/w/repositary/xml/wrn/img/SEA_wrn_now_${cleanTmFc}.png`
+                    `https://www.weather.go.kr/w/repositary/xml/wrn/img/JN_${cleanTmFc}.png`
                 );
             }
-
-            try {
-                const statusRes = await fetchWithTimeoutServer('https://www.weather.go.kr/w/weather/warning/status.do', { headers: kmaWebHeaders }, 4500);
-                if (statusRes.ok) {
-                    const html = await statusRes.text();
-                    const imgMatches = html.match(/\/w\/repositary\/xml\/wrn\/img\/[^"'\s<>]+\.(?:png|jpg|gif)/gi) || [];
-                    imgMatches.forEach(relPath => {
-                        if (!relPath.includes('legend') && !relPath.includes('icon')) {
-                            imgCandidates.push(`https://www.weather.go.kr${relPath}`);
-                        }
-                    });
-                }
-            } catch (e) {}
-
             imgCandidates.push(
-                `https://www.weather.go.kr/w/repositary/xml/wrn/img/wrn_now_data.png?_t=${nowUtc}`,
-                `https://www.weather.go.kr/w/repositary/xml/wrn/img/SEA_wrn_now.png?_t=${nowUtc}`,
-                `https://www.weather.go.kr/w/repositary/xml/wrn/img/KOR_wrn_now.png?_t=${nowUtc}`
+                `https://www.weather.go.kr/w/repositary/xml/wrn/img/wrn_now_data_new.png?_t=${nowUtc}`,
+                `https://www.weather.go.kr/w/repositary/xml/wrn/img/wrn_now_data.png?_t=${nowUtc}`
             );
 
             for (const imgUrl of imgCandidates) {
                 try {
                     const imgRes = await fetchWithTimeoutServer(imgUrl, {
                         headers: { ...kmaWebHeaders, 'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8' }
-                    }, 4000);
+                    }, 4500);
                     const cType = imgRes.headers.get('content-type') || '';
                     if (imgRes.ok && cType.startsWith('image/')) {
                         const buf = Buffer.from(await imgRes.arrayBuffer());
-                        if (buf.length > 1500) {
+                        if (buf.length > 2000) {
                             res.setHeader('Content-Type', cType);
                             res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
                             return res.status(200).send(buf);
