@@ -1,13 +1,13 @@
-// api/kma.js (해양기상부이 kma_buoy2 + 파고부이/등표 sea_obs + 정시 과거이력 sea_obs_hist + AWS 초고속 스냅샷/직전 1시간 1분단위 + 기상특보 이중수신 + 기상청 원문 특보지도 프록시)
+// api/kma.js (부이/파고부이/등표 + AWS 스냅샷 및 단일지점 1분단위 1시간 이력 + 기상특보 이중수신 + 공식 특보지도 nph-wrn7)
 export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
     if (req.method === 'OPTIONS') return res.status(200).end();
 
-    const { type = 'buoy', authKey = 's0C3VEw6ScOAt1RMOinDFQ', tmFc = '', tmEf = '' } = req.query;
+    const { type = 'buoy', authKey = 's0C3VEw6ScOAt1RMOinDFQ', tmFc = '', stn = '0' } = req.query;
     const cleanKey = String(authKey).trim();
     const cleanTmFc = String(tmFc).replace(/\D/g, '').substring(0, 12);
-    const cleanTmEf = String(tmEf).replace(/\D/g, '').substring(0, 12);
+    const cleanStn = String(stn).replace(/\D/g, '') || '0';
 
     const nowUtc = Date.now();
     const kstNow = new Date(nowUtc + 9 * 60 * 60 * 1000);
@@ -47,49 +47,26 @@ export default async function handler(req, res) {
     const tm1_1h = formatKst(kst1hAgo);
 
     try {
-        // 1. 기상청 원문 특보 발효현황 지도 이미지 프록시 (별도 API 승인 불필요)
+        // 1. 기상청 API허브 공식 특보 발효현황 지도 이미지 API (nph-wrn7)
         if (type === 'warn_img') {
-            const imgCandidates = [
-                `https://www.weather.go.kr/w/wnuri-img/wrn/wrn_now_data.png?_t=${nowUtc}`,
-                `https://www.weather.go.kr/w/repositary/xml/wrn/img/wrn_now_data.png?_t=${nowUtc}`,
-                `https://www.weather.go.kr/w/repositary/xml/wrn/img/wrn_now_data_new.png?_t=${nowUtc}`,
-                `https://apihub.kma.go.kr/api/typ01/url/wrn_now_data_img.php?fe=f&tm=&authKey=${cleanKey}`,
-                `https://apihub.kma.go.kr/api/typ01/url/wrn_now_img.php?fe=f&tm=&authKey=${cleanKey}`
-            ];
+            const targetTm = cleanTmFc.length >= 12 ? cleanTmFc : tm2;
+            const nphWrnUrl = `https://apihub.kma.go.kr/api/typ03/cgi/wrn/nph-wrn7?out=0&tmef=1&city=1&name=0&tm=${targetTm}&lon=126.1&lat=34.4&range=260&size=685&wrn=W,R,C,D,O,V,T,S,Y,H,F,K&authKey=${cleanKey}`;
 
-            if (cleanTmEf.length >= 12) {
-                imgCandidates.unshift(
-                    `https://www.weather.go.kr/w/wnuri-img/wrn/wrn_now_data_${cleanTmEf}.png`,
-                    `https://www.weather.go.kr/w/repositary/xml/wrn/img/wrn_now_data_${cleanTmEf}.png`,
-                    `https://www.weather.go.kr/w/repositary/xml/wrn/img/JN_${cleanTmEf}.png`
-                );
-            }
-            if (cleanTmFc.length >= 12) {
-                imgCandidates.unshift(
-                    `https://www.weather.go.kr/w/wnuri-img/wrn/wrn_now_data_${cleanTmFc}.png`,
-                    `https://www.weather.go.kr/w/repositary/xml/wrn/img/wrn_now_data_${cleanTmFc}.png`,
-                    `https://www.weather.go.kr/w/repositary/xml/wrn/img/JN_${cleanTmFc}.png`
-                );
-            }
-
-            for (const imgUrl of imgCandidates) {
-                try {
-                    const imgRes = await fetchWithTimeoutServer(imgUrl, {
-                        headers: { ...kmaWebHeaders, 'Accept': 'image/png,image/webp,image/*,*/*;q=0.8' }
-                    }, 4500);
-                    if (imgRes.ok) {
-                        const buf = Buffer.from(await imgRes.arrayBuffer());
-                        const isPng = buf.length > 2000 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47;
-                        const isJpg = buf.length > 2000 && buf[0] === 0xFF && buf[1] === 0xD8;
-                        const isGif = buf.length > 2000 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46;
-                        if (isPng || isJpg || isGif) {
-                            res.setHeader('Content-Type', isPng ? 'image/png' : (isJpg ? 'image/jpeg' : 'image/gif'));
-                            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-                            return res.status(200).send(buf);
-                        }
+            try {
+                const imgRes = await fetchWithTimeoutServer(nphWrnUrl, {
+                    headers: { 'User-Agent': 'Mozilla/5.0' }
+                }, 7000);
+                if (imgRes.ok) {
+                    const buf = Buffer.from(await imgRes.arrayBuffer());
+                    const isPng = buf.length > 1000 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47;
+                    if (isPng) {
+                        res.setHeader('Content-Type', 'image/png');
+                        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+                        return res.status(200).send(buf);
                     }
-                } catch (e) {}
-            }
+                }
+            } catch (e) {}
+
             return res.status(404).end();
         }
 
@@ -108,12 +85,10 @@ export default async function handler(req, res) {
             let seaText = '';
 
             if (resBuoy2.status === 'fulfilled' && resBuoy2.value.ok) {
-                const buf = await resBuoy2.value.arrayBuffer();
-                buoy2Text = decoder.decode(buf);
+                buoy2Text = decoder.decode(await resBuoy2.value.arrayBuffer());
             }
             if (resSea.status === 'fulfilled' && resSea.value.ok) {
-                const buf = await resSea.value.arrayBuffer();
-                seaText = decoder.decode(buf);
+                seaText = decoder.decode(await resSea.value.arrayBuffer());
             }
 
             const combined = `===BUOY2_START===\n${buoy2Text}\n===SEAOBS_START===\n${seaText}`;
@@ -122,7 +97,7 @@ export default async function handler(req, res) {
             return res.status(200).send(combined);
         }
 
-        // 2-1. 파고부이/등표(sea_obs.php) 과거 6시간 정시(00분) 백그라운드 병렬 수집
+        // 2-1. 파고부이/등표(sea_obs.php) 과거 6시간 정시(00분) 병렬 수집
         if (type === 'sea_obs_hist') {
             const decoder = new TextDecoder('euc-kr');
             const hourlyPromises = [];
@@ -151,7 +126,7 @@ export default async function handler(req, res) {
             return res.status(200).send(mergedSeaText);
         }
 
-        // 3. 기상특보 이중 수신 (API허브 wrn_now_data.php fe=f / fe=a + 날씨누리 status.do 백업 파싱)
+        // 3. 기상특보 이중 수신 (API허브 wrn_now_data.php + 날씨누리 백업)
         if (type === 'warn') {
             const decoder = new TextDecoder('euc-kr');
             const warnUrls = [
@@ -163,8 +138,7 @@ export default async function handler(req, res) {
                 try {
                     const wRes = await fetchWithTimeoutServer(wUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }, 6000);
                     if (wRes.ok) {
-                        const buf = await wRes.arrayBuffer();
-                        const text = decoder.decode(buf);
+                        const text = decoder.decode(await wRes.arrayBuffer());
                         const dataLines = text.split('\n').filter(l => l.trim() && !l.trim().startsWith('#'));
                         if (dataLines.length > 0 && !text.includes('AUTH_ERROR') && !text.includes('SERVICE_ERROR')) {
                             res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
@@ -231,7 +205,7 @@ export default async function handler(req, res) {
             return res.status(200).send('');
         }
 
-        // 4-1. AWS 초고속 최신 스냅샷 (0.2초 응답)
+        // 4-1. AWS 초고속 최신 스냅샷 (전국 stn=0, 0.2초 응답)
         if (type === 'aws_now') {
             const targetUrl = `https://apihub.kma.go.kr/api/typ01/cgi-bin/url/nph-aws2_min?stn=0&disp=0&help=0&authKey=${cleanKey}`;
             const response = await fetchWithTimeoutServer(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }, 8000);
@@ -241,10 +215,10 @@ export default async function handler(req, res) {
             return res.status(200).send(buffer);
         }
 
-        // 4-2. AWS 로그인(조회) 시각 기준 직전 1시간 1분 단위 실측 이력 (tm1 ~ tm2 필수)
+        // 4-2. AWS 특정 단일 관측소(stn=308 등) 직전 1시간 1분 단위 실측 이력 (60건 즉시 응답)
         if (type === 'aws') {
-            const targetUrl = `https://apihub.kma.go.kr/api/typ01/cgi-bin/url/nph-aws2_min?tm1=${tm1_1h}&tm2=${tm2}&stn=0&disp=0&help=0&authKey=${cleanKey}`;
-            const response = await fetchWithTimeoutServer(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }, 12000);
+            const targetUrl = `https://apihub.kma.go.kr/api/typ01/cgi-bin/url/nph-aws2_min?tm1=${tm1_1h}&tm2=${tm2}&stn=${cleanStn}&disp=0&help=0&authKey=${cleanKey}`;
+            const response = await fetchWithTimeoutServer(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }, 10000);
             const buffer = Buffer.from(await response.arrayBuffer());
             res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
             res.setHeader('Content-Type', 'text/plain; charset=euc-kr');
