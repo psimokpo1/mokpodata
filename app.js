@@ -42,7 +42,6 @@ function degToDirection(deg) {
 }
 
 let latestBuoyData = {
-    // [기상청 해양기상부이 / 파고부이 / 등표]
     '신안':         { stnId: '22183',   type: 'buoy',     name: '신안 부이',           wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
     '추자도':       { stnId: '22184',   type: 'buoy',     name: '추자도 부이',         wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
     '칠발도':       { stnId: '22102',   type: 'buoy',     name: '칠발도 부이',         wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
@@ -55,7 +54,6 @@ let latestBuoyData = {
     '제주항파고':   { stnId: '22453',   type: 'wavebuoy', name: '제주항 파고부이',     wind: null, windDir: null, sigWave: '-', maxWave: '-' },
     '해수서파고':   { stnId: '959',     type: 'beacon',   name: '해수서 등표',         wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
 
-    // [기상청 육상 AWS 지점 - 평균풍속 + 순간바람(gust)]
     '목포AWS':      { stnId: '165',     type: 'aws',      name: '목포 기상대(AWS)',    wind: '-', gust: '-', windDir: '-', sigWave: null, maxWave: null },
     '옥도':         { stnId: '308',     type: 'aws',      name: '옥도 AWS',            wind: '-', gust: '-', windDir: '-', sigWave: null, maxWave: null },
     '비금':         { stnId: '743',     type: 'aws',      name: '비금 AWS',            wind: '-', gust: '-', windDir: '-', sigWave: null, maxWave: null },
@@ -73,7 +71,6 @@ let latestBuoyData = {
     '지도':         { stnId: '707',     type: 'aws',      name: '지도 AWS',            wind: '-', gust: '-', windDir: '-', sigWave: null, maxWave: null },
     '안마도':       { stnId: '264',     type: 'aws',      name: '안마도 AWS',          wind: '-', gust: '-', windDir: '-', sigWave: null, maxWave: null },
 
-    // [측위정보원 등대/터미널]
     '안좌':         { stnId: '1079001', type: 'nmpnt',    name: '안좌터미널(측위)',     wind: '-', windDir: '-', sigWave: null, maxWave: null },
     '외달도':       { stnId: '1079008', type: 'nmpnt',    name: '외달도등표(측위)',     wind: '-', windDir: '-', sigWave: null, maxWave: null },
     '가거도등대':   { stnId: '1079003', type: 'nmpnt',    name: '가거도등대(측위)',     wind: '-', windDir: '-', sigWave: null, maxWave: null },
@@ -81,7 +78,6 @@ let latestBuoyData = {
     '하조도':       { stnId: '1079005', type: 'nmpnt',    name: '하조도등대(측위)',     wind: '-', windDir: '-', sigWave: null, maxWave: null },
     '계마항':       { stnId: '1079007', type: 'nmpnt',    name: '계마항등대(측위)',     wind: '-', windDir: '-', sigWave: null, maxWave: null },
 
-    // [국립해양조사원 해양관측부이 / 과학기지 / 조위관측소]
     '추자조사원':   { obsCode: 'KG_0025', type: 'khoa',   name: '추자부이(조사원)',     wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
     '가거초조사원': { obsCode: 'IE_0061', type: 'khoa',   name: '가거초기지(조사원)',   wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
     '향화도조위':   { obsCode: 'DT_0065', type: 'khoa',   name: '향화도조위(조사원)',   wind: '-', windDir: '-', sigWave: null, maxWave: null },
@@ -91,7 +87,7 @@ let latestBuoyData = {
 };
 
 // ==========================================
-// 1-1. 관측소 과거 이력 스마트 병합(Smart Merge) & 캐시 방어 엔진
+// 1-1. 관측소 과거 이력 스마트 병합 & 캐시 방어 엔진
 // ==========================================
 const HISTORY_CACHE_KEY = 'komsa_station_history_v2';
 let stationHistoryMap = {};
@@ -355,6 +351,143 @@ function initRealtimeSync() {
         snapshot.forEach(doc => { cloudRefItems[doc.id] = doc.data(); });
         renderRefSection();
     }, err => console.warn("reference_materials 동기화 안내:", err.message));
+}
+
+// ==========================================
+// 3. 선박 통제기준 및 항로·기항지별 맞춤 관측소 매핑 파서
+// ==========================================
+function parseVesselControlCriteria(rawName, decision, route, notes, ports = '') {
+    let fullText = ((rawName || '') + " " + (decision || '') + " " + (notes || '') + " " + (ports || '')).replace(/\s/g, '');
+    let r = (route || '').replace(/\s/g, '');
+    let p = (ports || '').replace(/\s/g, '');
+    
+    let tonnage = 0;
+    let tonMatch = (rawName || '').match(/([\d,]+)\s*G\s*\/\s*T/i);
+    if (tonMatch) tonnage = parseFloat(tonMatch[1].replace(/,/g, ''));
+
+    let isCaptainOpinion = fullText.includes("선장의견") || fullText.includes("선장협의") || fullText.includes("선장의의견");
+    let isOfficeDecision = fullText.includes("진도사무소") || fullText.includes("도초근무자") || fullText.includes("도초사무소") || fullText.includes("하의사무소") || fullText.includes("남강사무소");
+
+    let officeName = null;
+    if (fullText.includes("진도사무소")) officeName = "진도파견지";
+    else if (fullText.includes("도초근무자") || fullText.includes("도초사무소")) officeName = "도초파견지";
+    else if (fullText.includes("하의사무소")) officeName = "하의파견지";
+
+    let windLimit = null;
+    let windMatch = fullText.match(/(\d+(?:\.\d+)?)\s*m\/s/i);
+    if (windMatch) {
+        let parsedW = parseFloat(windMatch[1]);
+        if (parsedW >= 5.0) windLimit = parsedW;
+    }
+
+    let sigWaveLimit = null;
+    let maxWaveLimit = null;
+
+    let sigMatch = fullText.match(/유의파고[:\s]*(\d+(?:\.\d+)?)\s*m/i);
+    if (sigMatch && parseFloat(sigMatch[1]) >= 1.0) sigWaveLimit = parseFloat(sigMatch[1]);
+
+    let maxMatch = fullText.match(/최대파고[:\s]*(\d+(?:\.\d+)?)\s*m/i);
+    if (maxMatch && parseFloat(maxMatch[1]) >= 1.0) maxWaveLimit = parseFloat(maxMatch[1]);
+
+    if (!sigMatch && !maxMatch) {
+        let genMatch = fullText.match(/파고[:\s]*(\d+(?:\.\d+)?)\s*m(?!\/s)/i);
+        if (genMatch && parseFloat(genMatch[1]) >= 1.0) sigWaveLimit = parseFloat(genMatch[1]);
+    }
+
+    let stations = [];
+    const addSt = (key) => { if (latestBuoyData[key] && !stations.includes(key)) stations.push(key); };
+
+    if (r.startsWith("목포-") || p.includes("목포")) addSt('목포AWS');
+    if (r.includes("진도") || p.includes("진도")) { addSt('진도조위'); addSt('진도파고'); }
+    if (r.includes("향화-낙월") || r.includes("낙월") || p.includes("낙월")) { addSt('향화도조위'); addSt('낙월도'); }
+    else if (r.includes("향화") || p.includes("향화")) { addSt('향화도조위'); }
+    if (r.includes("계마-안마") || r.includes("안마") || p.includes("안마")) { addSt('계마항'); addSt('안마도'); }
+    else if (r.includes("계마") || p.includes("계마")) { addSt('계마항'); }
+    if (r.includes("증도-자은") || r.includes("자은")) addSt('자은도');
+    if (r.includes("송도-병풍")) addSt('지도');
+    if (r.includes("송공") || p.includes("송공")) addSt('압해도');
+    if (r.includes("가산") || p.includes("가산")) addSt('비금');
+    if (p.includes("복호") || fullText.includes("복호")) { addSt('안좌'); addSt('안좌AWS'); }
+    else if (fullText.includes("안좌")) { addSt('안좌'); }
+    if (r.includes("상태서리") || r.includes("웅곡") || r.includes("하의") || p.includes("웅곡") || p.includes("당두") || p.includes("상태서리")) addSt('하의도');
+    if (r.includes("도초-우이") || p.includes("우이")) addSt('우이도조사원');
+    if (r.includes("외달") || p.includes("외달")) addSt('외달도');
+
+    const isGageodoVessel = r.includes("가거도") || p.includes("가거도") || fullText.includes("핑크돌핀") || fullText.includes("뉴퀸");
+    if (isGageodoVessel) {
+        addSt('가거도'); addSt('가거도등대'); addSt('가거초조사원'); addSt('가거도AWS'); addSt('하태도');
+    }
+    if (r.includes("홍도") || p.includes("홍도")) { addSt('홍도'); addSt('홍도등대'); addSt('홍도AWS'); }
+    if (r.includes("흑산") || p.includes("흑산")) { addSt('흑산도'); addSt('흑산도AWS'); }
+
+    if (r.includes("율목") || r.includes("서거차") || r.includes("죽도") || p.includes("율목") || p.includes("서거차")) {
+        addSt('조도파고'); addSt('맹골수도파고'); addSt('진도파고'); addSt('해수서파고'); addSt('하조도'); addSt('서거차조위'); addSt('서거차AWS'); addSt('상조도');
+    } else if (r.includes("쉬미-가사") || p.includes("창유") || p.includes("조도")) {
+        addSt('조도파고'); addSt('진도파고'); addSt('하조도');
+    }
+
+    if (fullText.includes("옥도")) addSt('옥도');
+    if (fullText.includes("신안")) addSt('신안');
+    if (fullText.includes("칠발도") || r.includes("홍도") || r.includes("흑산")) addSt('칠발도');
+    if (fullText.includes("추자도") || r.includes("제주")) {
+        addSt('추자도'); addSt('추자조사원');
+        if (r.includes("제주") || p.includes("제주")) addSt('제주항파고');
+    }
+    if (stations.length === 0) {
+        if (fullText.includes("평수") || r.includes("남강") || r.includes("도초") || r.includes("상태")) {
+            addSt('신안'); addSt('옥도');
+        }
+    }
+
+    let relatedSeas = [];
+    if (fullText.includes("북쪽안쪽먼바다") || fullText.includes("서해남부북쪽안쪽먼바다")) relatedSeas.push("서해남부북쪽안쪽먼바다");
+    if (fullText.includes("남쪽안쪽먼바다") || fullText.includes("서해남부남쪽안쪽먼바다")) relatedSeas.push("서해남부남쪽안쪽먼바다");
+    if (fullText.includes("전남중부앞바다") || fullText.includes("전남중부") || fullText.includes("서해남부앞바다(전남중부)")) relatedSeas.push("서해남부앞바다(전남중부)");
+    if (fullText.includes("전남남부앞바다") || fullText.includes("전남남부") || fullText.includes("서해남부앞바다(전남남부)")) relatedSeas.push("서해남부앞바다(전남남부)");
+    if (fullText.includes("전남북부앞바다") || fullText.includes("전남북부") || fullText.includes("서해남부앞바다(전남북부)")) relatedSeas.push("서해남부앞바다(전남북부)");
+    if (fullText.includes("남해서부서쪽먼바다")) relatedSeas.push("남해서부서쪽먼바다");
+    if (fullText.includes("제주도북부앞바다")) relatedSeas.push("제주도북부앞바다");
+
+    if (relatedSeas.length === 0) {
+        if (r.includes("홍도") || r.includes("흑산")) {
+            relatedSeas.push(isGageodoVessel ? "서해남부남쪽안쪽먼바다" : "서해남부북쪽안쪽먼바다", "서해남부앞바다(전남중부)");
+        } else if (r.includes("제주")) {
+            relatedSeas.push("서해남부앞바다(전남중부)", "서해남부앞바다(전남남부)", "서해남부남쪽안쪽먼바다", "남해서부서쪽먼바다", "제주도북부앞바다");
+        } else if (r.includes("안마") || r.includes("계마")) {
+            relatedSeas.push("서해남부북쪽안쪽먼바다", "서해남부앞바다(전남북부)");
+        } else if (r.includes("향화") || r.includes("낙월") || r.includes("송이")) {
+            relatedSeas.push("서해남부앞바다(전남북부)");
+        } else if (r.includes("진도") || r.includes("가사") || r.includes("쉬미") || r.includes("율목")) {
+            relatedSeas.push("서해남부앞바다(전남남부)", "서해남부남쪽안쪽먼바다");
+        } else if (fullText.includes("평수")) {
+            relatedSeas.push("서해남부앞바다(전남중부)");
+        }
+    }
+
+    let isJodoPyungsu = fullText.includes("조도부근평수구역") || fullText.includes("조도부근평수");
+    let isYulmokRoute = r.includes("율목") || fullText.includes("목포-율목") || fullText.includes("평수구역으로단축운항");
+    let isPyungSuOnly = (fullText.includes("(평수)") && !fullText.includes("연해") && !fullText.includes("먼바다")) || isJodoPyungsu;
+    let isJejuMegaShip = (tonnage >= 10000) && (r.includes("제주") || fullText.includes("제주"));
+    let hasBypassRoute = fullText.includes("우회항로") || (r.includes("목포") && r.includes("제주"));
+
+    let rawAreaText = ((rawName || '') + " " + (decision || '') + " " + (notes || ''));
+    let areaMatch = rawAreaText.match(/\(([^)]*(?:평수|연해|앞바다|먼바다|근해)[^)]*)\)/);
+    let navArea = areaMatch ? areaMatch[1].trim() : '';
+
+    if (navArea.includes('핵심') || navArea.includes('통제')) navArea = '평수';
+    if (!navArea) {
+        let decClean = (decision || '').replace(/\s/g, '');
+        if (decClean.includes('평수구역') && !decClean.includes('연해') && !decClean.includes('먼바다')) navArea = '평수';
+        else if (decClean.includes('연해') && decClean.includes('먼바다')) navArea = '연해/먼바다';
+        else if (decClean.includes('먼바다')) navArea = '먼바다';
+        else if (decClean.includes('연해')) navArea = '연해';
+    }
+
+    return {
+        tonnage, navArea, isCaptainOpinion, isOfficeDecision, officeName,
+        stations, windLimit, sigWaveLimit, maxWaveLimit, relatedSeas,
+        isPyungSuOnly, isJodoPyungsu, isYulmokRoute, isJejuMegaShip, hasBypassRoute
+    };
 }
 
 // ==========================================
