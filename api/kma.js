@@ -11,6 +11,7 @@ export default async function handler(req, res) {
 
     const nowUtc = Date.now();
     const kstNow = new Date(nowUtc + 9 * 60 * 60 * 1000);
+    const kstSlightlyBack = new Date(nowUtc + 9 * 60 * 60 * 1000 - 2 * 60 * 1000);
     const kst6hAgo = new Date(nowUtc + 9 * 60 * 60 * 1000 - 6 * 60 * 60 * 1000);
     const kst1hAgo = new Date(nowUtc + 9 * 60 * 60 * 1000 - 60 * 60 * 1000);
 
@@ -43,8 +44,17 @@ export default async function handler(req, res) {
     };
 
     const tm2 = formatKst(kstNow);
+    const tm2Fallback = formatKst(kstSlightlyBack);
     const tm1_6h = formatKst(kst6hAgo);
     const tm1_1h = formatKst(kst1hAgo);
+
+    const hasDataRows = (txt) => {
+        if (!txt) return false;
+        return txt.split('\n').some(line => {
+            const t = line.trim();
+            return t && !t.startsWith('#') && !t.includes('UNAUTHORIZED') && !t.includes('DENIED') && !t.includes('ERROR');
+        });
+    };
 
     try {
         // 1. 기상청 API허브 공식 특보 발효현황 지도 이미지 API (nph-wrn7)
@@ -87,8 +97,29 @@ export default async function handler(req, res) {
             if (resBuoy2.status === 'fulfilled' && resBuoy2.value.ok) {
                 buoy2Text = decoder.decode(await resBuoy2.value.arrayBuffer());
             }
+            if (!hasDataRows(buoy2Text)) {
+                try {
+                    const buoy2RetryUrl = `https://apihub.kma.go.kr/api/typ01/url/kma_buoy2.php?tm1=${tm1_6h}&tm2=${tm2Fallback}&stn=0&help=1&authKey=${cleanKey}`;
+                    const retryRes = await fetchWithTimeoutServer(buoy2RetryUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }, 8000);
+                    if (retryRes.ok) {
+                        const retryText = decoder.decode(await retryRes.arrayBuffer());
+                        if (hasDataRows(retryText)) buoy2Text = retryText;
+                    }
+                } catch (e) {}
+            }
+
             if (resSea.status === 'fulfilled' && resSea.value.ok) {
                 seaText = decoder.decode(await resSea.value.arrayBuffer());
+            }
+            if (!hasDataRows(seaText)) {
+                try {
+                    const seaRetryUrl = `https://apihub.kma.go.kr/api/typ01/url/sea_obs.php?tm=${tm2Fallback}&stn=0&help=0&authKey=${cleanKey}`;
+                    const retrySeaRes = await fetchWithTimeoutServer(seaRetryUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }, 6000);
+                    if (retrySeaRes.ok) {
+                        const retrySeaText = decoder.decode(await retrySeaRes.arrayBuffer());
+                        if (hasDataRows(retrySeaText)) seaText = retrySeaText;
+                    }
+                } catch (e) {}
             }
 
             const combined = `===BUOY2_START===\n${buoy2Text}\n===SEAOBS_START===\n${seaText}`;
@@ -218,8 +249,15 @@ export default async function handler(req, res) {
         // 4-2. AWS 특정 단일 관측소(stn=308 등) 직전 1시간 1분 단위 실측 이력 (60건 즉시 응답)
         if (type === 'aws') {
             const targetUrl = `https://apihub.kma.go.kr/api/typ01/cgi-bin/url/nph-aws2_min?tm1=${tm1_1h}&tm2=${tm2}&stn=${cleanStn}&disp=0&help=0&authKey=${cleanKey}`;
-            const response = await fetchWithTimeoutServer(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }, 10000);
-            const buffer = Buffer.from(await response.arrayBuffer());
+            let response = await fetchWithTimeoutServer(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }, 10000);
+            let buffer = Buffer.from(await response.arrayBuffer());
+
+            if (buffer.length <= 10) {
+                const retryUrl = `https://apihub.kma.go.kr/api/typ01/cgi-bin/url/nph-aws2_min?tm1=${tm1_1h}&tm2=${tm2Fallback}&stn=${cleanStn}&disp=0&help=0&authKey=${cleanKey}`;
+                response = await fetchWithTimeoutServer(retryUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }, 10000);
+                buffer = Buffer.from(await response.arrayBuffer());
+            }
+
             res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
             res.setHeader('Content-Type', 'text/plain; charset=euc-kr');
             return res.status(200).send(buffer);
