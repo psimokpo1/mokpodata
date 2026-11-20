@@ -42,12 +42,12 @@ function degToDirection(deg) {
 }
 
 let latestBuoyData = {
-    '신안':         { stnId: '22183',   type: 'buoy',     name: '신안 부이',           wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
-    '추자도':       { stnId: '22184',   type: 'buoy',     name: '추자도 부이',         wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
-    '칠발도':       { stnId: '22102',   type: 'buoy',     name: '칠발도 부이',         wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
-    '홍도':         { stnId: '22298',   type: 'buoy',     name: '홍도 부이',           wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
-    '가거도':       { stnId: '22297',   type: 'buoy',     name: '가거도 부이',         wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
-    '흑산도':       { stnId: '22193',   type: 'buoy',     name: '흑산도 부이',         wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
+    '신안':         { stnId: '22183',   type: 'buoy',     name: '신안 부이',           wind: '-', gust: '-', windDir: '-', sigWave: '-', maxWave: '-' },
+    '추자도':       { stnId: '22184',   type: 'buoy',     name: '추자도 부이',         wind: '-', gust: '-', windDir: '-', sigWave: '-', maxWave: '-' },
+    '칠발도':       { stnId: '22102',   type: 'buoy',     name: '칠발도 부이',         wind: '-', gust: '-', windDir: '-', sigWave: '-', maxWave: '-' },
+    '홍도':         { stnId: '22298',   type: 'buoy',     name: '홍도 부이',           wind: '-', gust: '-', windDir: '-', sigWave: '-', maxWave: '-' },
+    '가거도':       { stnId: '22297',   type: 'buoy',     name: '가거도 부이',         wind: '-', gust: '-', windDir: '-', sigWave: '-', maxWave: '-' },
+    '흑산도':       { stnId: '22193',   type: 'buoy',     name: '흑산도 부이',         wind: '-', gust: '-', windDir: '-', sigWave: '-', maxWave: '-' },
     '조도파고':     { stnId: '22500',   type: 'wavebuoy', name: '조도 파고부이',       wind: null, windDir: null, sigWave: '-', maxWave: '-' },
     '맹골수도파고': { stnId: '22481',   type: 'wavebuoy', name: '맹골수도 파고부이',   wind: null, windDir: null, sigWave: '-', maxWave: '-' },
     '진도파고':     { stnId: '22449',   type: 'wavebuoy', name: '진도 파고부이',       wind: null, windDir: null, sigWave: '-', maxWave: '-' },
@@ -183,7 +183,7 @@ function loadStationHistoryCache() {
                             latestBuoyData[k].wind = parseFloat(last.wind).toFixed(1);
                             if (last.windDir && last.windDir !== '-') latestBuoyData[k].windDir = last.windDir;
                         }
-                        if (latestBuoyData[k].type === 'aws' && isValidMetric(last.gust)) {
+                        if ((latestBuoyData[k].type === 'aws' || latestBuoyData[k].type === 'buoy') && isValidMetric(last.gust)) {
                             latestBuoyData[k].gust = parseFloat(last.gust).toFixed(1);
                         }
                         if (latestBuoyData[k].sigWave !== null && isValidMetric(last.sigWave)) {
@@ -491,232 +491,6 @@ function parseVesselControlCriteria(rawName, decision, route, notes, ports = '')
 }
 
 // ==========================================
-// 3. 선박 통제기준 및 항로·기항지별 맞춤 관측소 매핑 파서
-// ==========================================
-function parseVesselControlCriteria(rawName, decision, route, notes, ports = '') {
-    let fullText = ((rawName || '') + " " + (decision || '') + " " + (notes || '') + " " + (ports || '')).replace(/\s/g, '');
-    let r = (route || '').replace(/\s/g, '');
-    let p = (ports || '').replace(/\s/g, '');
-    
-    let tonnage = 0;
-    let tonMatch = (rawName || '').match(/([\d,]+)\s*G\s*\/\s*T/i);
-    if (tonMatch) tonnage = parseFloat(tonMatch[1].replace(/,/g, ''));
-
-    let isCaptainOpinion = fullText.includes("선장의견") || fullText.includes("선장협의") || fullText.includes("선장의의견");
-    let isOfficeDecision = fullText.includes("진도사무소") || fullText.includes("도초근무자") || fullText.includes("도초사무소") || fullText.includes("하의사무소") || fullText.includes("남강사무소");
-
-    let officeName = null;
-    if (fullText.includes("진도사무소")) officeName = "진도파견지";
-    else if (fullText.includes("도초근무자") || fullText.includes("도초사무소")) officeName = "도초파견지";
-    else if (fullText.includes("하의사무소")) officeName = "하의파견지";
-
-    let windLimit = null;
-    let windMatch = fullText.match(/(\d+(?:\.\d+)?)\s*m\/s/i);
-    if (windMatch) {
-        let parsedW = parseFloat(windMatch[1]);
-        if (parsedW >= 5.0) windLimit = parsedW;
-    }
-
-    let sigWaveLimit = null;
-    let maxWaveLimit = null;
-
-    let sigMatch = fullText.match(/유의파고[:\s]*(\d+(?:\.\d+)?)\s*m/i);
-    if (sigMatch && parseFloat(sigMatch[1]) >= 1.0) sigWaveLimit = parseFloat(sigMatch[1]);
-
-    let maxMatch = fullText.match(/최대파고[:\s]*(\d+(?:\.\d+)?)\s*m/i);
-    if (maxMatch && parseFloat(maxMatch[1]) >= 1.0) maxWaveLimit = parseFloat(maxMatch[1]);
-
-    if (!sigMatch && !maxMatch) {
-        let genMatch = fullText.match(/파고[:\s]*(\d+(?:\.\d+)?)\s*m(?!\/s)/i);
-        if (genMatch && parseFloat(genMatch[1]) >= 1.0) sigWaveLimit = parseFloat(genMatch[1]);
-    }
-
-    let stations = [];
-    const addSt = (key) => { if (latestBuoyData[key] && !stations.includes(key)) stations.push(key); };
-
-    if (r.startsWith("목포-") || p.includes("목포")) {
-        addSt('목포AWS');
-    }
-
-    if (r.includes("진도") || p.includes("진도")) {
-        addSt('진도조위');
-        addSt('진도파고');
-    }
-
-    if (r.includes("향화-낙월") || r.includes("낙월") || p.includes("낙월")) {
-        addSt('향화도조위');
-        addSt('낙월도');
-    } else if (r.includes("향화") || p.includes("향화")) {
-        addSt('향화도조위');
-    }
-
-    if (r.includes("계마-안마") || r.includes("안마") || p.includes("안마")) {
-        addSt('계마항');
-        addSt('안마도');
-    } else if (r.includes("계마") || p.includes("계마")) {
-        addSt('계마항');
-    }
-
-    if (r.includes("증도-자은") || r.includes("자은")) {
-        addSt('자은도');
-    }
-
-    if (r.includes("송도-병풍")) {
-        addSt('지도');
-    }
-
-    if (r.includes("송공") || p.includes("송공")) {
-        addSt('압해도');
-    }
-
-    if (r.includes("가산") || p.includes("가산")) {
-        addSt('비금');
-    }
-
-    if (p.includes("복호") || fullText.includes("복호")) {
-        addSt('안좌');
-        addSt('안좌AWS');
-    } else if (fullText.includes("안좌")) {
-        addSt('안좌');
-    }
-
-    if (r.includes("상태서리") || r.includes("웅곡") || r.includes("하의") || p.includes("웅곡") || p.includes("당두") || p.includes("상태서리")) {
-        addSt('하의도');
-    }
-
-    if (r.includes("도초-우이") || p.includes("우이")) {
-        addSt('우이도조사원');
-    }
-
-    if (r.includes("외달") || p.includes("외달")) {
-        addSt('외달도');
-    }
-
-    const isGageodoVessel = r.includes("가거도") || p.includes("가거도") || fullText.includes("핑크돌핀") || fullText.includes("뉴퀸");
-    if (isGageodoVessel) {
-        addSt('가거도');
-        addSt('가거도등대');
-        addSt('가거초조사원');
-        addSt('가거도AWS');
-        addSt('하태도');
-    }
-
-    if (r.includes("홍도") || p.includes("홍도")) {
-        addSt('홍도');
-        addSt('홍도등대');
-        addSt('홍도AWS');
-    }
-
-    if (r.includes("흑산") || p.includes("흑산")) {
-        addSt('흑산도');
-        addSt('흑산도AWS');
-    }
-
-    if (r.includes("율목") || r.includes("서거차") || r.includes("죽도") || p.includes("율목") || p.includes("서거차")) {
-        addSt('조도파고');
-        addSt('맹골수도파고');
-        addSt('진도파고');
-        addSt('해수서파고');
-        addSt('하조도');
-        addSt('서거차조위');
-        addSt('서거차AWS');
-        addSt('상조도');
-    } else if (r.includes("쉬미-가사") || p.includes("창유") || p.includes("조도")) {
-        addSt('조도파고');
-        addSt('진도파고');
-        addSt('하조도');
-    }
-
-    if (fullText.includes("옥도")) addSt('옥도');
-    if (fullText.includes("신안")) addSt('신안');
-    if (fullText.includes("칠발도") || r.includes("홍도") || r.includes("흑산")) addSt('칠발도');
-    if (fullText.includes("추자도") || r.includes("제주")) {
-        addSt('추자도');
-        addSt('추자조사원');
-        if (r.includes("제주") || p.includes("제주")) {
-            addSt('제주항파고');
-        }
-    }
-
-    if (stations.length === 0) {
-        if (fullText.includes("평수") || r.includes("남강") || r.includes("도초") || r.includes("상태")) {
-            addSt('신안');
-            addSt('옥도');
-        }
-    }
-
-    let relatedSeas = [];
-    if (fullText.includes("북쪽안쪽먼바다") || fullText.includes("서해남부북쪽안쪽먼바다")) relatedSeas.push("서해남부북쪽안쪽먼바다");
-    if (fullText.includes("남쪽안쪽먼바다") || fullText.includes("서해남부남쪽안쪽먼바다")) relatedSeas.push("서해남부남쪽안쪽먼바다");
-    if (fullText.includes("전남중부앞바다") || fullText.includes("전남중부") || fullText.includes("서해남부앞바다(전남중부)")) relatedSeas.push("서해남부앞바다(전남중부)");
-    if (fullText.includes("전남남부앞바다") || fullText.includes("전남남부") || fullText.includes("서해남부앞바다(전남남부)")) relatedSeas.push("서해남부앞바다(전남남부)");
-    if (fullText.includes("전남북부앞바다") || fullText.includes("전남북부") || fullText.includes("서해남부앞바다(전남북부)")) relatedSeas.push("서해남부앞바다(전남북부)");
-    if (fullText.includes("남해서부서쪽먼바다")) relatedSeas.push("남해서부서쪽먼바다");
-    if (fullText.includes("제주도북부앞바다")) relatedSeas.push("제주도북부앞바다");
-
-    if (relatedSeas.length === 0) {
-        if (r.includes("홍도") || r.includes("흑산")) {
-            relatedSeas.push(isGageodoVessel ? "서해남부남쪽안쪽먼바다" : "서해남부북쪽안쪽먼바다", "서해남부앞바다(전남중부)");
-        } else if (r.includes("제주")) {
-            relatedSeas.push("서해남부앞바다(전남중부)", "서해남부앞바다(전남남부)", "서해남부남쪽안쪽먼바다", "남해서부서쪽먼바다", "제주도북부앞바다");
-        } else if (r.includes("안마") || r.includes("계마")) {
-            relatedSeas.push("서해남부북쪽안쪽먼바다", "서해남부앞바다(전남북부)");
-        } else if (r.includes("향화") || r.includes("낙월") || r.includes("송이")) {
-            relatedSeas.push("서해남부앞바다(전남북부)");
-        } else if (r.includes("진도") || r.includes("가사") || r.includes("쉬미") || r.includes("율목")) {
-            relatedSeas.push("서해남부앞바다(전남남부)", "서해남부남쪽안쪽먼바다");
-        } else if (fullText.includes("평수")) {
-            relatedSeas.push("서해남부앞바다(전남중부)");
-        }
-    }
-
-    let isJodoPyungsu = fullText.includes("조도부근평수구역") || fullText.includes("조도부근평수");
-    let isYulmokRoute = r.includes("율목") || fullText.includes("목포-율목") || fullText.includes("평수구역으로단축운항");
-    let isPyungSuOnly = (fullText.includes("(평수)") && !fullText.includes("연해") && !fullText.includes("먼바다")) || isJodoPyungsu;
-    let isJejuMegaShip = (tonnage >= 10000) && (r.includes("제주") || fullText.includes("제주"));
-    let hasBypassRoute = fullText.includes("우회항로") || (r.includes("목포") && r.includes("제주"));
-
-    let rawAreaText = ((rawName || '') + " " + (decision || '') + " " + (notes || ''));
-    let areaMatch = rawAreaText.match(/\(([^)]*(?:평수|연해|앞바다|먼바다|근해)[^)]*)\)/);
-    let navArea = areaMatch ? areaMatch[1].trim() : '';
-
-    if (navArea.includes('핵심') || navArea.includes('통제')) {
-        navArea = '평수';
-    }
-
-    if (!navArea) {
-        let decClean = (decision || '').replace(/\s/g, '');
-        if (decClean.includes('평수구역') && !decClean.includes('연해') && !decClean.includes('먼바다')) {
-            navArea = '평수';
-        } else if (decClean.includes('연해') && decClean.includes('먼바다')) {
-            navArea = '연해/먼바다';
-        } else if (decClean.includes('먼바다')) {
-            navArea = '먼바다';
-        } else if (decClean.includes('연해')) {
-            navArea = '연해';
-        }
-    }
-
-    return {
-        tonnage: tonnage,
-        navArea: navArea,
-        isCaptainOpinion: isCaptainOpinion,
-        isOfficeDecision: isOfficeDecision,
-        officeName: officeName,
-        stations: stations,
-        windLimit: windLimit,
-        sigWaveLimit: sigWaveLimit,
-        maxWaveLimit: maxWaveLimit,
-        relatedSeas: relatedSeas,
-        isPyungSuOnly: isPyungSuOnly,
-        isJodoPyungsu: isJodoPyungsu,
-        isYulmokRoute: isYulmokRoute,
-        isJejuMegaShip: isJejuMegaShip,
-        hasBypassRoute: hasBypassRoute
-    };
-}
-
-// ==========================================
 // 4. 상황판 및 과거 이력 타임테이블 모달 (AWS 1시간 1분단위 / 부이·등표·조사원 6시간 실측 표출)
 // ==========================================
 window.toggleMeteoDetailRow = function(shipCode) {
@@ -737,10 +511,11 @@ function renderWeatherHistoryModalBody(stKey, isLoading = false) {
     if (!modalEl) return;
 
     let isAws = (stData && stData.type === 'aws');
+    let isMarineBuoy = (stData && stData.type === 'buoy');
     let isWaveBuoy = (stData && stData.type === 'wavebuoy');
     let isWindOnly = (stData && (stData.type === 'nmpnt' || (stData.sigWave === null && !isAws)));
     let rangeLabel = isAws ? '최근 1시간 (1분 단위)' : '최근 6시간';
-    let colSpanCount = isAws ? 5 : (isWindOnly ? 4 : (isWaveBuoy ? 4 : 6));
+    let colSpanCount = isAws ? 5 : (isMarineBuoy ? 7 : (isWindOnly ? 4 : (isWaveBuoy ? 4 : 6)));
 
     let rowsHtml = '';
     if (isLoading && historyArr.length <= 2) {
@@ -765,6 +540,18 @@ function renderWeatherHistoryModalBody(stKey, isLoading = false) {
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${wDir}</td>
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center; font-weight:bold;">${wSpd}</td>
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center; font-weight:bold; color:#D97706;">${gSpd}</td>
+                    </tr>
+                `;
+            } else if (isMarineBuoy) {
+                rowsHtml += `
+                    <tr>
+                        <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${tStr}</td>
+                        <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${stName}</td>
+                        <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${wDir}</td>
+                        <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center; font-weight:bold;">${wSpd}</td>
+                        <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center; font-weight:bold; color:#D97706;">${gSpd}</td>
+                        <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${sigW}</td>
+                        <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${maxW}</td>
                     </tr>
                 `;
             } else if (isWindOnly) {
@@ -803,6 +590,8 @@ function renderWeatherHistoryModalBody(stKey, isLoading = false) {
     let headerCols = '';
     if (isAws) {
         headerCols = `<th style="padding:10px; background:#F8FAFC; border-bottom:2px solid #CBD5E1;">시간</th><th style="padding:10px; background:#F8FAFC; border-bottom:2px solid #CBD5E1;">관측소</th><th style="padding:10px; background:#F8FAFC; border-bottom:2px solid #CBD5E1;">풍향</th><th style="padding:10px; background:#F8FAFC; border-bottom:2px solid #CBD5E1;">평균풍속(m/s)</th><th style="padding:10px; background:#FEF3C7; color:#92400E; border-bottom:2px solid #CBD5E1;">순간바람(m/s)</th>`;
+    } else if (isMarineBuoy) {
+        headerCols = `<th style="padding:10px; background:#F8FAFC; border-bottom:2px solid #CBD5E1;">시간</th><th style="padding:10px; background:#F8FAFC; border-bottom:2px solid #CBD5E1;">관측소</th><th style="padding:10px; background:#F8FAFC; border-bottom:2px solid #CBD5E1;">풍향</th><th style="padding:10px; background:#F8FAFC; border-bottom:2px solid #CBD5E1;">풍속(m/s)</th><th style="padding:10px; background:#FEF3C7; color:#92400E; border-bottom:2px solid #CBD5E1;">순간풍속(m/s)</th><th style="padding:10px; background:#F8FAFC; border-bottom:2px solid #CBD5E1;">유의파고(m)</th><th style="padding:10px; background:#F8FAFC; border-bottom:2px solid #CBD5E1;">최대파고(m)</th>`;
     } else if (isWindOnly) {
         headerCols = `<th style="padding:10px; background:#F8FAFC; border-bottom:2px solid #CBD5E1;">시간</th><th style="padding:10px; background:#F8FAFC; border-bottom:2px solid #CBD5E1;">관측소</th><th style="padding:10px; background:#F8FAFC; border-bottom:2px solid #CBD5E1;">풍향</th><th style="padding:10px; background:#F8FAFC; border-bottom:2px solid #CBD5E1;">풍속(m/s)</th>`;
     } else if (isWaveBuoy) {
@@ -880,7 +669,7 @@ function buildMeteoSubTableHtml(parsed, shipName, routeName) {
         const windVal = parseFloat(stData.wind);
         const gustVal = parseFloat(stData.gust);
         const hasWind = (stData.wind !== null && stData.wind !== '-' && !isNaN(windVal));
-        const hasGust = (stData.type === 'aws' && stData.gust !== null && stData.gust !== '-' && !isNaN(gustVal));
+        const hasGust = ((stData.type === 'aws' || stData.type === 'buoy') && stData.gust !== null && stData.gust !== '-' && !isNaN(gustVal));
 
         let windStyle = '';
         if (hasWind) {
@@ -1088,7 +877,6 @@ function renderOperationBoard() {
                         } else {
                             hasRealIssuedWarning = true;
                             if (alertType.includes('경보')) {
-                                // 목포-제주 우회항로 특례: 서해남부남쪽안쪽먼바다와 남해서부서쪽먼바다 둘 다 경보일 때만 경보 통제, 한쪽만 주의보 이하이면 우회 가능
                                 if (parsed.hasBypassRoute && (sea === '서해남부남쪽안쪽먼바다' || sea === '남해서부서쪽먼바다')) {
                                     const westSouthAlert = activeSeaWarnings['서해남부남쪽안쪽먼바다'] || '';
                                     const southWestAlert = activeSeaWarnings['남해서부서쪽먼바다'] || '';
@@ -1143,7 +931,7 @@ function renderOperationBoard() {
                     let windVal = Number(stData.wind);
                     let gustVal = Number(stData.gust);
                     let hasRealWind = (!isWaveBuoy && stData.wind !== '-' && stData.wind !== null && !isNaN(windVal) && windVal >= 0 && windVal < 100);
-                    let hasRealGust = (isAws && stData.gust !== '-' && stData.gust !== null && !isNaN(gustVal) && gustVal >= 0 && gustVal < 100);
+                    let hasRealGust = ((isAws || stData.type === 'buoy') && stData.gust !== '-' && stData.gust !== null && !isNaN(gustVal) && gustVal >= 0 && gustVal < 120);
 
                     if (hasRealWind && (windVal >= wLimit)) isAnyWindDanger = true;
                     else if (hasRealWind && (windVal >= (wLimit * 0.85))) isAnyWindWarn = true;
@@ -1197,7 +985,6 @@ function renderOperationBoard() {
                 criteriaDisplay = `풍속 ${wLimit}m/s<br>${parsed.sigWaveLimit ? '유의 ' + parsed.sigWaveLimit + 'm' : '파고 2.0m'}`;
             }
 
-            // 1순위: 관측계소 실측치(풍속·파고) 통제기준 초과 여부를 최우선 검사
             if (parsed.tonnage >= 2000) {
                 if (hasGaleGyeongbo || isAnyWindDanger || isAnyWaveDanger) {
                     status = 'danger'; statusBadge = '<span class="status-badge badge-danger">🔴 통제위험</span>'; countDanger++;
@@ -1540,7 +1327,6 @@ function buildWeatherNuriSummaryHtml(rawText) {
     `;
 }
 
-// 기상청 공식 특보 지도 이미지 로드 실패 시 실제 발효 데이터 기반 SVG 해역도 백업 렌더링
 window.renderFallbackWarningSvgMap = function(imgEl) {
     if (!imgEl || !imgEl.parentElement) return;
     const container = imgEl.parentElement;
@@ -1804,7 +1590,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         }
     };
 
-    // 1. 기상청 AWS 초고속 스냅샷 (최우선 독립 실행 - 도착 즉시 화면 반영)
     const pAws = fetchKmaApi("aws_now", authKey, 12000).then(textAwsNow => {
         if (textAwsNow) {
             const c = parseAwsTextData(textAwsNow);
@@ -1817,7 +1602,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         }
     }).catch(() => {});
 
-    // 2. 기상청 해양기상부이 / 파고부이 / 등표 (도착 즉시 화면 반영)
     const pBuoy = fetchKmaApi("buoy", authKey, 12000).then(textBuoy => {
         if (!textBuoy) return;
         const targetBuoys = [
@@ -1843,27 +1627,38 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         const parseBuoy2Block = (blockText) => {
             if (!blockText || blockText.includes('UNAUTHORIZED') || blockText.includes('DENIED') || blockText.includes('ERROR')) return;
             const lines = blockText.split('\n');
-            let idxTm = 0, idxStn = 1, idxWd = 2, idxWs = 3, idxMaxWh = 12, idxSigWh = 13;
+            let idxTm = 0, idxStn = 1, idxWd = 2, idxWs1 = 3, idxGst1 = 4, idxWd2 = 5, idxWs2 = 6, idxGst2 = 7, idxMaxWh = 12, idxSigWh = 13;
 
             for (let rawL of lines) {
                 let l = rawL.trim();
                 if (l.startsWith('#') && l.includes('STN') && l.includes('WH_MAX')) {
-                    let hCols = l.replace(/^#+\s*/, '').split(/\s+/);
+                    let hCols = l.replace(/^#+\s*/, '').split(/[\s,]+/).filter(Boolean);
                     let fTm = hCols.indexOf('TM');
                     let fStn = hCols.indexOf('STN');
-                    let fWd = hCols.indexOf('WD1');
-                    let fWs = hCols.indexOf('WS1');
+                    let fWd1 = hCols.indexOf('WD1');
+                    let fWs1 = hCols.indexOf('WS1');
+                    let fGst1 = hCols.indexOf('WS1_GST');
+                    let fWd2 = hCols.indexOf('WD2');
+                    let fWs2 = hCols.indexOf('WS2');
+                    let fGst2 = hCols.indexOf('WS2_GST');
                     let fMax = hCols.indexOf('WH_MAX');
                     let fSig = hCols.indexOf('WH_SIG');
                     if (fTm >= 0) idxTm = fTm;
                     if (fStn >= 0) idxStn = fStn;
-                    if (fWd >= 0) idxWd = fWd;
-                    if (fWs >= 0) idxWs = fWs;
+                    if (fWd1 >= 0) idxWd = fWd1;
+                    if (fWs1 >= 0) idxWs1 = fWs1;
+                    if (fGst1 >= 0) idxGst1 = fGst1;
+                    if (fWd2 >= 0) idxWd2 = fWd2;
+                    if (fWs2 >= 0) idxWs2 = fWs2;
+                    if (fGst2 >= 0) idxGst2 = fGst2;
                     if (fMax >= 0) idxMaxWh = fMax;
                     if (fSig >= 0) idxSigWh = fSig;
                     break;
                 }
             }
+
+            const isValidWind = (v) => !isNaN(v) && v >= 0 && v < 50.0;
+            const isValidGust = (v) => !isNaN(v) && v >= 0 && v < 120.0;
 
             lines.forEach(line => {
                 line = line.trim();
@@ -1879,21 +1674,43 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                     if (stnId === tb.id) {
                         if (latestBuoyData[tb.key] && latestBuoyData[tb.key].type === 'wavebuoy') return;
 
-                        let rawWd = parseFloat(cols[idxWd]);
-                        let rawWs = parseFloat(cols[idxWs]);
+                        const isMarineBuoy = latestBuoyData[tb.key] && latestBuoyData[tb.key].type === 'buoy';
+
+                        let rawWd1 = parseFloat(cols[idxWd]);
+                        let rawWd2 = cols.length > idxWd2 ? parseFloat(cols[idxWd2]) : NaN;
+                        let rawWs1 = parseFloat(cols[idxWs1]);
+                        let rawWs2 = cols.length > idxWs2 ? parseFloat(cols[idxWs2]) : NaN;
+                        let rawGst1 = cols.length > idxGst1 ? parseFloat(cols[idxGst1]) : NaN;
+                        let rawGst2 = cols.length > idxGst2 ? parseFloat(cols[idxGst2]) : NaN;
+
+                        let useWs = isValidWind(rawWs1) ? rawWs1 : (isValidWind(rawWs2) ? rawWs2 : NaN);
+                        let useWd = (!isNaN(rawWd1) && rawWd1 >= 0 && rawWd1 <= 360)
+                            ? rawWd1
+                            : ((!isNaN(rawWd2) && rawWd2 >= 0 && rawWd2 <= 360) ? rawWd2 : NaN);
+
+                        // 거스트: WS1_GST 우선, 결측/비정상 시 WS2_GST 대체
+                        let useGst = isValidGust(rawGst1) ? rawGst1 : (isValidGust(rawGst2) ? rawGst2 : NaN);
+
                         let rawMaxWh = parseFloat(cols[idxMaxWh]);
                         let rawSigWh = parseFloat(cols[idxSigWh]);
 
-                        let wVal = (!isNaN(rawWs) && rawWs >= 0 && rawWs < 50.0) ? rawWs.toFixed(1) : '-';
-                        let dVal = (!isNaN(rawWd) && rawWd >= 0 && rawWd <= 360) ? degToDirection(rawWd) : '-';
+                        let wVal = isValidWind(useWs) ? useWs.toFixed(1) : '-';
+                        let gVal = '-';
+                        if (isMarineBuoy && isValidGust(useGst)) {
+                            const adjGst = (isValidWind(useWs) && useGst < useWs) ? useWs : useGst;
+                            gVal = adjGst.toFixed(1);
+                        }
+
+                        let dVal = !isNaN(useWd) ? degToDirection(useWd) : '-';
                         let whVal = (!isNaN(rawSigWh) && rawSigWh >= 0.0 && rawSigWh <= 15.0) ? rawSigWh.toFixed(1) : '-';
                         let maxWhVal = (!isNaN(rawMaxWh) && rawMaxWh >= 0.0 && rawMaxWh <= 25.0) ? rawMaxWh.toFixed(1) : '-';
 
-                        if (wVal !== '-' || whVal !== '-') {
+                        if (wVal !== '-' || gVal !== '-' || whVal !== '-') {
                             upsertStationHistory(tb.key, {
                                 sortKey: tmStr,
                                 time: timeOnly,
                                 wind: wVal,
+                                gust: isMarineBuoy ? gVal : '-',
                                 windDir: dVal,
                                 sigWave: whVal,
                                 maxWave: maxWhVal
@@ -1906,6 +1723,9 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                                 latestBuoyData[tb.key].wind = wVal;
                                 if (dVal !== '-') latestBuoyData[tb.key].windDir = dVal;
                                 updatedCount++;
+                            }
+                            if (isMarineBuoy) {
+                                latestBuoyData[tb.key].gust = gVal;
                             }
                             if (whVal !== '-') {
                                 latestBuoyData[tb.key].sigWave = whVal;
@@ -1933,7 +1753,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         renderOperationBoard();
     }).catch(() => {});
 
-    // 3. 기상특보 (도착 즉시 특보 배지 및 자동통제 반영)
     const pWarn = fetchKmaApi("warn", authKey, 10000).then(textWarn => {
         if (textWarn) {
             parseWeatherWarnings(textWarn);
@@ -1941,7 +1760,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         }
     }).catch(() => {});
 
-    // 4. 측위정보원 (도착 즉시 반영)
     const pNmpnt = shouldFetchNmpnt
         ? fetchWithTimeout(`/api/nmpnt?serviceKey=${encodeURIComponent(nmpntKey)}&_t=${nowMs}`, {}, 12000)
             .then(r => r.json())
@@ -1995,7 +1813,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             }).catch(() => {})
         : Promise.resolve();
 
-    // 5. 국립해양조사원 6개소 (각각 도착 즉시 반영)
     const khoaTargets = [
         { code: 'KG_0025', key: '추자조사원' },
         { code: 'IE_0061', key: '가거초조사원' },
@@ -2064,7 +1881,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         if (recvEl) recvEl.innerText = `⚠️ 수신된 기상 데이터 없음`;
     }
 
-    // 파고부이/등표 과거 6시간 정시 이력 백그라운드 보충
     const needSeaObsBackfill = (!isAuto) || ['해수서파고', '진도파고', '조도파고', '맹골수도파고', '제주항파고'].some(
         k => !Array.isArray(stationHistoryMap[k]) || stationHistoryMap[k].filter(h => isWithinLast6Hours(h.sortKey)).length < 3
     );
@@ -2135,7 +1951,7 @@ window.changeAutoRefreshInterval = function(valStr) {
         if (counterEl) counterEl.innerText = `⏳ 다음 갱신: 정지됨`;
     } else {
         const m = String(Math.floor(sec / 60)).padStart(2, '0');
-        const s = String(nextRefreshRemainingSec % 60).padStart(2, '0');
+        const s = String(sec % 60).padStart(2, '0');
         if (counterEl) counterEl.innerText = `⏳ 다음 갱신: ${m}:${s}`;
     }
 };
