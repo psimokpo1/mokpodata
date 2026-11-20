@@ -1,4 +1,4 @@
-// api/kma.js (해양기상부이 kma_buoy2 + 파고부이/등표 sea_obs + 정시 과거이력 sea_obs_hist + AWS 초고속 스냅샷/과거 3정시 + 기상특보 이중수신 + 기상청 원문 특보지도 프록시)
+// api/kma.js (해양기상부이 kma_buoy2 + 파고부이/등표 sea_obs + 정시 과거이력 sea_obs_hist + AWS 초고속 스냅샷/직전 1시간 1분단위 + 기상특보 이중수신 + 기상청 원문 특보지도 프록시)
 export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -12,6 +12,7 @@ export default async function handler(req, res) {
     const nowUtc = Date.now();
     const kstNow = new Date(nowUtc + 9 * 60 * 60 * 1000);
     const kst6hAgo = new Date(nowUtc + 9 * 60 * 60 * 1000 - 6 * 60 * 60 * 1000);
+    const kst1hAgo = new Date(nowUtc + 9 * 60 * 60 * 1000 - 60 * 60 * 1000);
 
     const formatKst = (d) => {
         const yyyy = d.getUTCFullYear();
@@ -43,46 +44,46 @@ export default async function handler(req, res) {
 
     const tm2 = formatKst(kstNow);
     const tm1_6h = formatKst(kst6hAgo);
+    const tm1_1h = formatKst(kst1hAgo);
 
     try {
-        // 1. 기상청 원문 특보 발효현황 지도 이미지 프록시 (API허브 공식 이미지 API + 날씨누리 실제 발효시각/전남관할 이미지 경로)
+        // 1. 기상청 원문 특보 발효현황 지도 이미지 프록시 (별도 API 승인 불필요)
         if (type === 'warn_img') {
-            const imgCandidates = [];
+            const imgCandidates = [
+                `https://www.weather.go.kr/w/wnuri-img/wrn/wrn_now_data.png?_t=${nowUtc}`,
+                `https://www.weather.go.kr/w/repositary/xml/wrn/img/wrn_now_data.png?_t=${nowUtc}`,
+                `https://www.weather.go.kr/w/repositary/xml/wrn/img/wrn_now_data_new.png?_t=${nowUtc}`,
+                `https://apihub.kma.go.kr/api/typ01/url/wrn_now_data_img.php?fe=f&tm=&authKey=${cleanKey}`,
+                `https://apihub.kma.go.kr/api/typ01/url/wrn_now_img.php?fe=f&tm=&authKey=${cleanKey}`
+            ];
 
-            // 1순위: 기상청 API허브 공식 특보현황 지도 이미지 API
-            imgCandidates.push(
-                `https://apihub.kma.go.kr/api/typ01/url/wrn_now_img.php?fe=f&tm=&authKey=${cleanKey}`,
-                `https://apihub.kma.go.kr/api/typ01/url/wrn_img.php?fe=f&tm=&authKey=${cleanKey}`
-            );
-
-            // 2순위: 기상청 날씨누리 실제 저장소 이미지 경로 (발효시각 tmEf / 발표시각 tmFc / 전남 JN_ / 최신 고정파일)
             if (cleanTmEf.length >= 12) {
-                imgCandidates.push(
+                imgCandidates.unshift(
+                    `https://www.weather.go.kr/w/wnuri-img/wrn/wrn_now_data_${cleanTmEf}.png`,
                     `https://www.weather.go.kr/w/repositary/xml/wrn/img/wrn_now_data_${cleanTmEf}.png`,
                     `https://www.weather.go.kr/w/repositary/xml/wrn/img/JN_${cleanTmEf}.png`
                 );
             }
             if (cleanTmFc.length >= 12) {
-                imgCandidates.push(
+                imgCandidates.unshift(
+                    `https://www.weather.go.kr/w/wnuri-img/wrn/wrn_now_data_${cleanTmFc}.png`,
                     `https://www.weather.go.kr/w/repositary/xml/wrn/img/wrn_now_data_${cleanTmFc}.png`,
                     `https://www.weather.go.kr/w/repositary/xml/wrn/img/JN_${cleanTmFc}.png`
                 );
             }
-            imgCandidates.push(
-                `https://www.weather.go.kr/w/repositary/xml/wrn/img/wrn_now_data_new.png?_t=${nowUtc}`,
-                `https://www.weather.go.kr/w/repositary/xml/wrn/img/wrn_now_data.png?_t=${nowUtc}`
-            );
 
             for (const imgUrl of imgCandidates) {
                 try {
                     const imgRes = await fetchWithTimeoutServer(imgUrl, {
-                        headers: { ...kmaWebHeaders, 'Accept': 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8' }
+                        headers: { ...kmaWebHeaders, 'Accept': 'image/png,image/webp,image/*,*/*;q=0.8' }
                     }, 4500);
-                    const cType = imgRes.headers.get('content-type') || '';
-                    if (imgRes.ok && cType.startsWith('image/')) {
+                    if (imgRes.ok) {
                         const buf = Buffer.from(await imgRes.arrayBuffer());
-                        if (buf.length > 2000) {
-                            res.setHeader('Content-Type', cType);
+                        const isPng = buf.length > 2000 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47;
+                        const isJpg = buf.length > 2000 && buf[0] === 0xFF && buf[1] === 0xD8;
+                        const isGif = buf.length > 2000 && buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46;
+                        if (isPng || isJpg || isGif) {
+                            res.setHeader('Content-Type', isPng ? 'image/png' : (isJpg ? 'image/jpeg' : 'image/gif'));
                             res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
                             return res.status(200).send(buf);
                         }
@@ -240,33 +241,14 @@ export default async function handler(req, res) {
             return res.status(200).send(buffer);
         }
 
-        // 4-2. AWS 과거 3개 정시(1h, 2h, 3h 전 정시 3건만 병렬 조회 -> CGI 병목/타임아웃 0%)
+        // 4-2. AWS 로그인(조회) 시각 기준 직전 1시간 1분 단위 실측 이력 (tm1 ~ tm2 필수)
         if (type === 'aws') {
-            const decoder = new TextDecoder('euc-kr');
-            const hourPromises = [];
-
-            for (let hOffset = 1; hOffset <= 3; hOffset++) {
-                const targetKst = new Date(nowUtc + 9 * 60 * 60 * 1000 - hOffset * 60 * 60 * 1000);
-                const yyyy = targetKst.getUTCFullYear();
-                const mm = String(targetKst.getUTCMonth() + 1).padStart(2, '0');
-                const dd = String(targetKst.getUTCDate()).padStart(2, '0');
-                const hh = String(targetKst.getUTCHours()).padStart(2, '0');
-                const tmHour = `${yyyy}${mm}${dd}${hh}00`;
-
-                const url = `https://apihub.kma.go.kr/api/typ01/cgi-bin/url/nph-aws2_min?tm=${tmHour}&stn=0&disp=0&help=0&authKey=${cleanKey}`;
-                hourPromises.push(
-                    fetchWithTimeoutServer(url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, 6000)
-                        .then(async (r) => (r.ok ? decoder.decode(await r.arrayBuffer()) : ''))
-                        .catch(() => '')
-                );
-            }
-
-            const results = await Promise.all(hourPromises);
-            const mergedAwsText = results.filter(Boolean).join('\n');
-
+            const targetUrl = `https://apihub.kma.go.kr/api/typ01/cgi-bin/url/nph-aws2_min?tm1=${tm1_1h}&tm2=${tm2}&stn=0&disp=0&help=0&authKey=${cleanKey}`;
+            const response = await fetchWithTimeoutServer(targetUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } }, 12000);
+            const buffer = Buffer.from(await response.arrayBuffer());
             res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
-            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-            return res.status(200).send(mergedAwsText);
+            res.setHeader('Content-Type', 'text/plain; charset=euc-kr');
+            return res.status(200).send(buffer);
         }
 
         return res.status(200).send('');
