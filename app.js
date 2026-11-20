@@ -105,19 +105,6 @@ function parseSortKeyToUtcMs(sortKey) {
     return Date.UTC(y, m, d, h - 9, min, 0);
 }
 
-function formatUtcMsToKstSlot(utcMs) {
-    const kst = new Date(utcMs + 9 * 60 * 60 * 1000);
-    const yyyy = kst.getUTCFullYear();
-    const mm = String(kst.getUTCMonth() + 1).padStart(2, '0');
-    const dd = String(kst.getUTCDate()).padStart(2, '0');
-    const hh = String(kst.getUTCHours()).padStart(2, '0');
-    const min = String(kst.getUTCMinutes()).padStart(2, '0');
-    return {
-        sortKey: `${yyyy}${mm}${dd}${hh}${min}`,
-        time: `${hh}:${min}`
-    };
-}
-
 function isWithinLast6Hours(sortKey) {
     const itemUtcMs = parseSortKeyToUtcMs(sortKey);
     if (isNaN(itemUtcMs)) return false;
@@ -157,8 +144,7 @@ function upsertStationHistory(stKey, entry) {
             gust: isValidMetric(entry.gust) ? entry.gust : (prev.gust ?? '-'),
             windDir: (entry.windDir && entry.windDir !== '-') ? entry.windDir : (prev.windDir ?? '-'),
             sigWave: isValidMetric(entry.sigWave) ? entry.sigWave : (prev.sigWave ?? null),
-            maxWave: isValidMetric(entry.maxWave) ? entry.maxWave : (prev.maxWave ?? null),
-            isInterpolated: false
+            maxWave: isValidMetric(entry.maxWave) ? entry.maxWave : (prev.maxWave ?? null)
         };
     } else {
         list.push({
@@ -168,8 +154,7 @@ function upsertStationHistory(stKey, entry) {
             gust: isValidMetric(entry.gust) ? entry.gust : '-',
             windDir: (entry.windDir && entry.windDir !== '-') ? entry.windDir : '-',
             sigWave: isValidMetric(entry.sigWave) ? entry.sigWave : null,
-            maxWave: isValidMetric(entry.maxWave) ? entry.maxWave : null,
-            isInterpolated: false
+            maxWave: isValidMetric(entry.maxWave) ? entry.maxWave : null
         });
     }
 }
@@ -182,7 +167,7 @@ function loadStationHistoryCache() {
             for (let k in parsed) {
                 if (Array.isArray(parsed[k])) {
                     const validRows = parsed[k]
-                        .filter(h => isWithinLast6Hours(h.sortKey))
+                        .filter(h => !h.isInterpolated && isWithinLast6Hours(h.sortKey))
                         .sort((a, b) => String(a.sortKey).localeCompare(String(b.sortKey)));
                     stationHistoryMap[k] = validRows;
 
@@ -217,7 +202,7 @@ function saveStationHistoryCache() {
             if (Array.isArray(stationHistoryMap[k])) {
                 const dedupMap = {};
                 stationHistoryMap[k].forEach(item => {
-                    if (!isWithinLast6Hours(item.sortKey)) return;
+                    if (item.isInterpolated || !isWithinLast6Hours(item.sortKey)) return;
                     const sk = String(item.sortKey).substring(0, 12);
                     dedupMap[sk] = { ...item, sortKey: sk };
                 });
@@ -228,56 +213,11 @@ function saveStationHistoryCache() {
     } catch (e) {}
 }
 
+// 실제 수신된 관측 이력만 시간순 반환 (가짜 유지 보정 제거)
 function buildContinuousHistoryForModal(stKey) {
-    const rawList = (stationHistoryMap[stKey] || [])
+    return (stationHistoryMap[stKey] || [])
         .filter(h => isWithinLast6Hours(h.sortKey))
         .sort((a, b) => String(a.sortKey).localeCompare(String(b.sortKey)));
-
-    if (rawList.length === 0) return [];
-
-    const stData = latestBuoyData[stKey];
-    const isBuoyOrWaveBuoy = stData && (stData.type === 'buoy' || stData.type === 'wavebuoy' || stData.type === 'beacon');
-    if (isBuoyOrWaveBuoy) {
-        return rawList.filter(h => {
-            const diff = Date.now() - parseSortKeyToUtcMs(h.sortKey);
-            return diff >= -15 * 60 * 1000 && diff <= 6 * 60 * 60 * 1000 + 15 * 60 * 1000;
-        });
-    }
-
-    const tenMinMs = 10 * 60 * 1000;
-    const nowFlooredMs = Math.floor(Date.now() / tenMinMs) * tenMinMs;
-    const sixHoursAgoMs = nowFlooredMs - 6 * 60 * 60 * 1000;
-
-    const bucketMap = {};
-    rawList.forEach(item => {
-        const ms = parseSortKeyToUtcMs(item.sortKey);
-        if (isNaN(ms)) return;
-        const slotMs = Math.floor(ms / tenMinMs) * tenMinMs;
-        bucketMap[slotMs] = { ...item, isInterpolated: false };
-    });
-
-    const firstObservedMs = Math.floor(parseSortKeyToUtcMs(rawList[0].sortKey) / tenMinMs) * tenMinMs;
-    const startMs = Math.max(sixHoursAgoMs, firstObservedMs);
-
-    const filledList = [];
-    let lastCarry = null;
-
-    for (let t = startMs; t <= nowFlooredMs; t += tenMinMs) {
-        if (bucketMap[t]) {
-            lastCarry = bucketMap[t];
-            filledList.push(lastCarry);
-        } else if (lastCarry) {
-            const slotInfo = formatUtcMsToKstSlot(t);
-            filledList.push({
-                ...lastCarry,
-                sortKey: slotInfo.sortKey,
-                time: slotInfo.time,
-                isInterpolated: true
-            });
-        }
-    }
-
-    return filledList;
 }
 
 let activeSeaWarnings = {
@@ -628,7 +568,7 @@ function parseVesselControlCriteria(rawName, decision, route, notes, ports = '')
 }
 
 // ==========================================
-// 4. 상황판 및 최근 6시간 과거 이력 타임테이블 모달 (AWS 순간바람 & 연속 슬롯 보정 포함)
+// 4. 상황판 및 최근 6시간 과거 이력 타임테이블 모달 (AWS 순간바람 포함, 실측 데이터만 표출)
 // ==========================================
 window.toggleMeteoDetailRow = function(shipCode) {
     const detailRow = document.getElementById(`meteo-detail-${shipCode}`);
@@ -665,10 +605,6 @@ window.openWeatherHistoryModal = function(stKey) {
         let sortedList = [...historyArr].sort((a, b) => (b.sortKey || b.time || '').localeCompare(a.sortKey || a.time || ''));
         sortedList.forEach(h => {
             let tStr = h.time || '-';
-            if (h.isInterpolated) {
-                tStr += ` <span style="font-size:10px; color:#94A3B8;">(유지)</span>`;
-            }
-            let rowBg = h.isInterpolated ? 'background:#F8FAFC; color:#64748B;' : '';
             let wDir = h.windDir || '-';
             let wSpd = (!isNaN(parseFloat(h.wind)) && h.wind !== '-') ? parseFloat(h.wind).toFixed(1) : '-';
             let gSpd = (!isNaN(parseFloat(h.gust)) && h.gust !== '-') ? parseFloat(h.gust).toFixed(1) : '-';
@@ -677,7 +613,7 @@ window.openWeatherHistoryModal = function(stKey) {
 
             if (isAws) {
                 rowsHtml += `
-                    <tr style="${rowBg}">
+                    <tr>
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${tStr}</td>
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${stName}</td>
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${wDir}</td>
@@ -687,7 +623,7 @@ window.openWeatherHistoryModal = function(stKey) {
                 `;
             } else if (isWindOnly) {
                 rowsHtml += `
-                    <tr style="${rowBg}">
+                    <tr>
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${tStr}</td>
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${stName}</td>
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${wDir}</td>
@@ -696,7 +632,7 @@ window.openWeatherHistoryModal = function(stKey) {
                 `;
             } else if (isWaveBuoy) {
                 rowsHtml += `
-                    <tr style="${rowBg}">
+                    <tr>
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${tStr}</td>
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${stName}</td>
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center; font-weight:bold;">${sigW}</td>
@@ -705,7 +641,7 @@ window.openWeatherHistoryModal = function(stKey) {
                 `;
             } else {
                 rowsHtml += `
-                    <tr style="${rowBg}">
+                    <tr>
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${tStr}</td>
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${stName}</td>
                         <td style="padding:8px; border-bottom:1px solid #E2E8F0; text-align:center;">${wDir}</td>
@@ -1169,7 +1105,7 @@ function renderOperationBoard() {
 }
 
 // ==========================================
-// 5. 기상특보 파싱 및 통신 엔진 (AWS 2단계 분리 + sea_obs 정시 백그라운드 수집 + 날씨누리 특보 모달)
+// 5. 기상특보 파싱 및 통신 엔진 (목포관내 AWS 16개소 6시간 + sea_obs 정시 백그라운드 수집 + 날씨누리 특보 모달)
 // ==========================================
 function setSeaWarningByLatestFc(seaKey, alertType, fcTimeNum) {
     let prevFc = seaWarningTimestamps[seaKey] || 0;
@@ -1422,7 +1358,7 @@ async function fetchKmaApi(type, authKey, timeoutMs = 12000) {
             }
         }
         
-        if (text && text.trim().length > 5 && !text.includes("FETCH_ERROR") && !text.includes("INVALID_")) {
+        if (text && text.trim().length > 5 && !text.startsWith("FETCH_ERROR")) {
             return text;
         }
         throw new Error("유효하지 않은 응답");
@@ -1494,7 +1430,7 @@ function parseSeaObsTextData(blockText, latestTsByKey = {}) {
     return count;
 }
 
-// AWS 텍스트 파싱 헬퍼 (1단계 즉시 스냅샷 & 2단계 최근 3시간 이력 공용 + 스마트 병합 적용)
+// AWS 텍스트 파싱 헬퍼 (1단계 즉시 스냅샷 & 2단계 목포관내 16개소 최근 6시간 이력 공용 + 스마트 병합 적용)
 function parseAwsTextData(textAws) {
     if (!textAws) return 0;
     const awsLines = textAws.split('\n');
@@ -1874,6 +1810,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         }
         renderOperationBoard();
 
+        // 2단계(백그라운드): 목포관내 16개 AWS 최근 6시간(10분 간격) 실측 이력 수집 및 병합
         fetchKmaApi("aws", authKey, 12000).then(textAwsHist => {
             if (textAwsHist) {
                 parseAwsTextData(textAwsHist);
@@ -1882,6 +1819,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             }
         }).catch(() => {});
 
+        // 파고부이/등표 이력이 3건 미만이거나 수동 새로고침일 때만 과거 6개 정시 이력 조회
         const needSeaObsBackfill = (!isAuto) || ['해수서파고', '진도파고', '조도파고', '맹골수도파고'].some(
             k => !Array.isArray(stationHistoryMap[k]) || stationHistoryMap[k].filter(h => isWithinLast6Hours(h.sortKey)).length < 3
         );
@@ -2202,7 +2140,6 @@ function render() {
         const mainListEl = document.getElementById('mainList');
         if (mainListEl) {
             mainListEl.innerHTML = fullHtml;
-            // 초기 렌더링 시 이미 펼쳐져 있는 상세 영역의 사진과 버튼 즉시 로드
             document.querySelectorAll('.vessel-header[data-uid]').forEach(hdr => {
                 const detailEl = hdr.nextElementSibling;
                 if (detailEl && getComputedStyle(detailEl).display !== 'none') {
