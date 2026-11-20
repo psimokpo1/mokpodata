@@ -595,28 +595,24 @@ window.toggleMeteoDetailRow = function(shipCode) {
     if (icon) icon.innerText = isShowing ? '▼' : '▲';
 };
 
-window.openWeatherHistoryModal = function(stKey) {
+function renderWeatherHistoryModalBody(stKey, isLoading = false) {
     const stData = latestBuoyData[stKey];
     const stName = stData ? (stData.name || stKey) : stKey;
     const historyArr = buildContinuousHistoryForModal(stKey);
 
-    let modalEl = document.getElementById('weather-history-modal');
-    if (!modalEl) {
-        modalEl = document.createElement('div');
-        modalEl.id = 'weather-history-modal';
-        modalEl.style.cssText = 'position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.55); z-index:99999; display:flex; align-items:center; justify-content:center;';
-        document.body.appendChild(modalEl);
-    }
+    const modalEl = document.getElementById('weather-history-modal');
+    if (!modalEl) return;
 
     let isAws = (stData && stData.type === 'aws');
     let isWaveBuoy = (stData && stData.type === 'wavebuoy');
     let isWindOnly = (stData && (stData.type === 'nmpnt' || (stData.sigWave === null && !isAws)));
-    let rangeLabel = isAws ? '최근 1시간' : '최근 6시간';
-
+    let rangeLabel = isAws ? '최근 1시간 (1분 단위)' : '최근 6시간';
     let colSpanCount = isAws ? 5 : (isWindOnly ? 4 : (isWaveBuoy ? 4 : 6));
 
     let rowsHtml = '';
-    if (historyArr.length === 0) {
+    if (isLoading && historyArr.length <= 2) {
+        rowsHtml = `<tr><td colspan="${colSpanCount}" style="text-align:center; padding:24px; color:#0284C7; font-weight:bold;">📡 [${stName}] 최근 1시간 1분 단위 실측 이력을 불러오는 중입니다...</td></tr>`;
+    } else if (historyArr.length === 0) {
         rowsHtml = `<tr><td colspan="${colSpanCount}" style="text-align:center; padding:24px; color:#94A3B8;">${rangeLabel} 이내 수집된 관측 이력이 없습니다.</td></tr>`;
     } else {
         let sortedList = [...historyArr].sort((a, b) => (b.sortKey || b.time || '').localeCompare(a.sortKey || a.time || ''));
@@ -700,6 +696,32 @@ window.openWeatherHistoryModal = function(stKey) {
         </div>
     `;
     modalEl.style.display = 'flex';
+}
+
+window.openWeatherHistoryModal = async function(stKey) {
+    const stData = latestBuoyData[stKey];
+    let modalEl = document.getElementById('weather-history-modal');
+    if (!modalEl) {
+        modalEl = document.createElement('div');
+        modalEl.id = 'weather-history-modal';
+        modalEl.style.cssText = 'position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.55); z-index:99999; display:flex; align-items:center; justify-content:center;';
+        document.body.appendChild(modalEl);
+    }
+
+    const isAws = (stData && stData.type === 'aws' && stData.stnId);
+    renderWeatherHistoryModalBody(stKey, isAws);
+
+    if (isAws) {
+        try {
+            let authKey = localStorage.getItem("kma_apihub_authkey") || DEFAULT_KMA_AUTHKEY;
+            const textAwsSingle = await fetchKmaApi("aws", authKey, 10000, `&stn=${encodeURIComponent(stData.stnId)}`);
+            if (textAwsSingle) {
+                parseAwsTextData(textAwsSingle);
+                saveStationHistoryCache();
+            }
+        } catch (e) {}
+        renderWeatherHistoryModalBody(stKey, false);
+    }
 };
 
 function buildMeteoSubTableHtml(parsed, shipName, routeName) {
@@ -1145,7 +1167,7 @@ function renderOperationBoard() {
 }
 
 // ==========================================
-// 5. 기상특보 파싱 및 통신 엔진 (이중수신 특보 + AWS 초고속 스냅샷/1시간 1분단위 + sea_obs 정시 백그라운드 수집 + 실시간 특보 지도)
+// 5. 기상특보 파싱 및 통신 엔진
 // ==========================================
 function setSeaWarningByLatestFc(seaKey, alertType, fcTimeNum) {
     let prevFc = seaWarningTimestamps[seaKey] || 0;
@@ -1385,7 +1407,7 @@ function buildWeatherNuriSummaryHtml(rawText) {
     `;
 }
 
-// 기상청 원문 특보 발효현황 지도 이미지 로드 실패 시 실제 발효 데이터 기반 SVG 해역도 백업 렌더링
+// 기상청 공식 특보 지도 이미지 로드 실패 시 실제 발효 데이터 기반 SVG 해역도 백업 렌더링
 window.renderFallbackWarningSvgMap = function(imgEl) {
     if (!imgEl || !imgEl.parentElement) return;
     const container = imgEl.parentElement;
@@ -1473,9 +1495,9 @@ async function fetchWithTimeout(url, options = {}, timeout = 8000) {
     }
 }
 
-async function fetchKmaApi(type, authKey, timeoutMs = 12000) {
+async function fetchKmaApi(type, authKey, timeoutMs = 12000, extraQuery = '') {
     try {
-        const url = `/api/kma?type=${type}&authKey=${encodeURIComponent(authKey)}&_t=${Date.now()}`;
+        const url = `/api/kma?type=${type}&authKey=${encodeURIComponent(authKey)}${extraQuery}&_t=${Date.now()}`;
         const response = await fetchWithTimeout(url, {}, timeoutMs);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         
@@ -1943,15 +1965,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
             if (recvEl) recvEl.innerText = `⚠️ 수신된 기상 데이터 없음`;
         }
         renderOperationBoard();
-
-        // 2단계(백그라운드): AWS 로그인(조회) 시각 기준 직전 1시간 1분 단위 실측 이력 수집 및 병합
-        fetchKmaApi("aws", authKey, 14000).then(textAwsHist => {
-            if (textAwsHist) {
-                parseAwsTextData(textAwsHist);
-                saveStationHistoryCache();
-                renderOperationBoard();
-            }
-        }).catch(() => {});
 
         // 파고부이/등표 이력이 3건 미만이거나 수동 새로고침일 때만 과거 6개 정시 이력 조회
         const needSeaObsBackfill = (!isAuto) || ['해수서파고', '진도파고', '조도파고', '맹골수도파고', '제주항파고'].some(
