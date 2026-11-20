@@ -26,6 +26,7 @@ let countdownIntervalId = null;
 let nextRefreshRemainingSec = 300;
 let latestRawWarnText = "";
 let latestWarnTmFc = "";
+let latestWarnTmEf = "";
 let lastNmpntFetchMs = 0;
 
 const DEFAULT_KMA_AUTHKEY = "s0C3VEw6ScOAt1RMOinDFQ";
@@ -1192,6 +1193,7 @@ function parseWeatherWarnings(rawText) {
 
     const nowMs = Date.now();
     let maxFcStr = "";
+    let maxEfStr = "";
 
     const csvRecords = parseKmaWarnRecords(rawText);
     if (csvRecords.length > 0) {
@@ -1204,10 +1206,12 @@ function parseWeatherWarnings(rawText) {
             const cmd = rec.cmd.replace(/\s/g, '');
             const tmEfStr = rec.tmEf.replace(/\D/g, '');
             const fcDigits = rec.tmFc.replace(/\D/g, '').substring(0, 12);
+            const efDigits = tmEfStr.substring(0, 12);
             const fcTimeNum = parseInt(fcDigits || '0', 10) || 0;
 
-            if (fcDigits.length >= 12 && fcDigits > maxFcStr) {
+            if (fcDigits.length >= 12 && fcDigits >= maxFcStr) {
                 maxFcStr = fcDigits;
+                if (efDigits.length >= 12) maxEfStr = efDigits;
             }
 
             if (!wrn.includes('풍랑') && !wrn.includes('해상')) return;
@@ -1253,6 +1257,7 @@ function parseWeatherWarnings(rawText) {
             }
         });
         if (maxFcStr) latestWarnTmFc = maxFcStr;
+        if (maxEfStr) latestWarnTmEf = maxEfStr;
         return;
     }
 
@@ -1267,8 +1272,12 @@ function parseWeatherWarnings(rawText) {
             let lvl = String(item.LVL || '').replace(/\s/g, '');
             let cmd = String(item.CMD || '').replace(/\s/g, '');
             let fcDigits = String(item.TM_FC || '0').replace(/\D/g, '').substring(0, 12);
+            let efDigits = String(item.TM_EF || '0').replace(/\D/g, '').substring(0, 12);
             let fcTimeNum = parseInt(fcDigits, 10) || 0;
-            if (fcDigits.length >= 12 && fcDigits > maxFcStr) maxFcStr = fcDigits;
+            if (fcDigits.length >= 12 && fcDigits >= maxFcStr) {
+                maxFcStr = fcDigits;
+                if (efDigits.length >= 12) maxEfStr = efDigits;
+            }
             if (cmd.includes('해제') || cmd === '3') return;
             if (!wrn.includes('풍랑') && !wrn.includes('해상')) return;
 
@@ -1282,6 +1291,7 @@ function parseWeatherWarnings(rawText) {
             else if (fullReg.includes('제주도') && regKo.includes('북부앞바다')) setSeaWarningByLatestFc('제주도북부앞바다', alertType, fcTimeNum);
         });
         if (maxFcStr) latestWarnTmFc = maxFcStr;
+        if (maxEfStr) latestWarnTmEf = maxEfStr;
     } catch (e) {}
 }
 
@@ -1375,7 +1385,7 @@ function buildWeatherNuriSummaryHtml(rawText) {
     `;
 }
 
-// 기상청 특보 발효현황 지도 이미지 로드 실패 시 실제 발효 데이터 기반 SVG 해역도 백업 렌더링
+// 기상청 원문 특보 발효현황 지도 이미지 로드 실패 시 실제 발효 데이터 기반 SVG 해역도 백업 렌더링
 window.renderFallbackWarningSvgMap = function(imgEl) {
     if (!imgEl || !imgEl.parentElement) return;
     const container = imgEl.parentElement;
@@ -2851,7 +2861,7 @@ window.openRawWarnModal = () => {
     if (!modal) return;
 
     const summaryHtml = buildWeatherNuriSummaryHtml(latestRawWarnText);
-    const mapImgUrl = `/api/kma?type=warn_img&tmFc=${encodeURIComponent(latestWarnTmFc)}&_t=${Date.now()}`;
+    const mapImgUrl = `/api/kma?type=warn_img&tmFc=${encodeURIComponent(latestWarnTmFc)}&tmEf=${encodeURIComponent(latestWarnTmEf)}&_t=${Date.now()}`;
 
     modal.innerHTML = `
         <div style="background:#fff; width:920px; max-width:96vw; max-height:90vh; border-radius:12px; box-shadow:0 12px 30px rgba(0,0,0,0.3); display:flex; flex-direction:column; overflow:hidden;">
