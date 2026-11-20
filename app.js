@@ -24,7 +24,7 @@ let boardFilterMode = 'all';
 
 let countdownIntervalId = null;
 let nextRefreshRemainingSec = 300;
-let latestRawWarnText = "기상청 특보 통보문을 수신 중입니다...";
+let latestRawWarnText = "";
 let lastNmpntFetchMs = 0;
 
 const DEFAULT_KMA_AUTHKEY = "s0C3VEw6ScOAt1RMOinDFQ";
@@ -110,6 +110,13 @@ function isWithinLast6Hours(sortKey) {
     if (isNaN(itemUtcMs)) return false;
     const diffMs = Date.now() - itemUtcMs;
     return diffMs >= -15 * 60 * 1000 && diffMs <= (6 * 60 + 30) * 60 * 1000;
+}
+
+function isWithinLast3Hours(sortKey) {
+    const itemUtcMs = parseSortKeyToUtcMs(sortKey);
+    if (isNaN(itemUtcMs)) return false;
+    const diffMs = Date.now() - itemUtcMs;
+    return diffMs >= -15 * 60 * 1000 && diffMs <= (3 * 60 + 15) * 60 * 1000;
 }
 
 function isValidMetric(val) {
@@ -213,10 +220,11 @@ function saveStationHistoryCache() {
     } catch (e) {}
 }
 
-// 실제 수신된 관측 이력만 시간순 반환 (가짜 유지 보정 제거)
 function buildContinuousHistoryForModal(stKey) {
+    const stData = latestBuoyData[stKey];
+    const isAws = stData && stData.type === 'aws';
     return (stationHistoryMap[stKey] || [])
-        .filter(h => isWithinLast6Hours(h.sortKey))
+        .filter(h => (isAws ? isWithinLast3Hours(h.sortKey) : isWithinLast6Hours(h.sortKey)))
         .sort((a, b) => String(a.sortKey).localeCompare(String(b.sortKey)));
 }
 
@@ -568,7 +576,7 @@ function parseVesselControlCriteria(rawName, decision, route, notes, ports = '')
 }
 
 // ==========================================
-// 4. 상황판 및 최근 6시간 과거 이력 타임테이블 모달 (AWS 순간바람 포함, 실측 데이터만 표출)
+// 4. 상황판 및 과거 이력 타임테이블 모달 (AWS 3시간 / 부이·등표·조사원 6시간 실측 표출)
 // ==========================================
 window.toggleMeteoDetailRow = function(shipCode) {
     const detailRow = document.getElementById(`meteo-detail-${shipCode}`);
@@ -595,12 +603,13 @@ window.openWeatherHistoryModal = function(stKey) {
     let isAws = (stData && stData.type === 'aws');
     let isWaveBuoy = (stData && stData.type === 'wavebuoy');
     let isWindOnly = (stData && (stData.type === 'nmpnt' || (stData.sigWave === null && !isAws)));
+    let rangeLabel = isAws ? '최근 3시간' : '최근 6시간';
 
     let colSpanCount = isAws ? 5 : (isWindOnly ? 4 : (isWaveBuoy ? 4 : 6));
 
     let rowsHtml = '';
     if (historyArr.length === 0) {
-        rowsHtml = `<tr><td colspan="${colSpanCount}" style="text-align:center; padding:24px; color:#94A3B8;">최근 6시간 이내 수집된 관측 이력이 없습니다.</td></tr>`;
+        rowsHtml = `<tr><td colspan="${colSpanCount}" style="text-align:center; padding:24px; color:#94A3B8;">${rangeLabel} 이내 수집된 관측 이력이 없습니다.</td></tr>`;
     } else {
         let sortedList = [...historyArr].sort((a, b) => (b.sortKey || b.time || '').localeCompare(a.sortKey || a.time || ''));
         sortedList.forEach(h => {
@@ -668,7 +677,7 @@ window.openWeatherHistoryModal = function(stKey) {
     modalEl.innerHTML = `
         <div style="background:#fff; width:680px; max-width:95vw; max-height:85vh; border-radius:12px; box-shadow:0 10px 25px rgba(0,0,0,0.25); display:flex; flex-direction:column; overflow:hidden;">
             <div style="padding:15px 20px; background:#1E293B; color:#fff; display:flex; justify-content:space-between; align-items:center;">
-                <h3 style="margin:0; font-size:15.5px;">📈 [${stName}] 최근 6시간 기상 관측 이력 (${historyArr.length}건)</h3>
+                <h3 style="margin:0; font-size:15.5px;">📈 [${stName}] ${rangeLabel} 기상 관측 이력 (${historyArr.length}건)</h3>
                 <button onclick="document.getElementById('weather-history-modal').style.display='none'" style="background:none; border:none; color:#fff; font-size:18px; cursor:pointer; font-weight:bold;">✕</button>
             </div>
             <div style="padding:18px; overflow-y:auto; flex:1;">
@@ -734,7 +743,7 @@ function buildMeteoSubTableHtml(parsed, shipName, routeName) {
         rowsHtml += `
             <tr>
                 <td>${agencyBadge}</td>
-                <td><strong style="cursor:pointer; color:#0284C7; text-decoration:underline;" onclick="openWeatherHistoryModal('${stKey}')" title="클릭 시 '${stData.name || stKey}' 최근 6시간 이력 조회">${stData.name || stKey}</strong></td>
+                <td><strong style="cursor:pointer; color:#0284C7; text-decoration:underline;" onclick="openWeatherHistoryModal('${stKey}')" title="클릭 시 '${stData.name || stKey}' 과거 이력 조회">${stData.name || stKey}</strong></td>
                 <td style="${windStyle}">${windDisplay}</td>
                 <td>${waveStr}</td>
                 <td><span style="color:#059669; font-weight:bold;">실시간 연동</span></td>
@@ -745,7 +754,7 @@ function buildMeteoSubTableHtml(parsed, shipName, routeName) {
     return `
         <div class="meteo-detail-container">
             <div class="meteo-detail-header">
-                <span>📊 [${routeName}] ${shipName} — 연계 관측소 실시간 관측 상세 테이블 (관측소명 클릭 시 최근 6시간 이력 조회)</span>
+                <span>📊 [${routeName}] ${shipName} — 연계 관측소 실시간 관측 상세 테이블 (관측소명 클릭 시 과거 이력 조회)</span>
                 <span style="font-size:11.5px; color:#64748B; font-weight:normal;">선박 통제기준: 풍속 ${wLimit}m/s ${parsed.sigWaveLimit ? '/ 유의파고 ' + parsed.sigWaveLimit + 'm' : ''}</span>
             </div>
             <table class="meteo-sub-table">
@@ -981,7 +990,7 @@ function renderOperationBoard() {
                     if (hasRealSig && hasRealMax) waveText = `유의 ${sigVal.toFixed(1)}m (최대 ${maxVal.toFixed(1)}m)`;
                     else if (hasRealSig) waveText = `유의 ${sigVal.toFixed(1)}m`;
 
-                    let clickableTitle = `<span style="cursor:pointer; color:#0284C7; text-decoration:underline;" onclick="event.stopPropagation(); openWeatherHistoryModal('${stKey}')" title="클릭 시 '${stTitle}' 최근 6시간 이력 조회">${stTitle}</span>`;
+                    let clickableTitle = `<span style="cursor:pointer; color:#0284C7; text-decoration:underline;" onclick="event.stopPropagation(); openWeatherHistoryModal('${stKey}')" title="클릭 시 '${stTitle}' 과거 이력 조회">${stTitle}</span>`;
 
                     if (isWaveBuoy) {
                         stationPoints.push(`🌊 ${clickableTitle}`);
@@ -1105,7 +1114,7 @@ function renderOperationBoard() {
 }
 
 // ==========================================
-// 5. 기상특보 파싱 및 통신 엔진 (목포관내 AWS 16개소 6시간 + sea_obs 정시 백그라운드 수집 + 날씨누리 특보 모달)
+// 5. 기상특보 파싱 및 통신 엔진 (이중수신 특보 + AWS 3시간 실측 + sea_obs 정시 백그라운드 수집 + 날씨누리 특보 모달)
 // ==========================================
 function setSeaWarningByLatestFc(seaKey, alertType, fcTimeNum) {
     let prevFc = seaWarningTimestamps[seaKey] || 0;
@@ -1188,7 +1197,7 @@ function parseWeatherWarnings(rawText) {
                 let baseName = isGyeongbo ? '풍랑경보' : '풍랑주의보';
                 if (tmEfMs > 0 && nowMs < tmEfMs) alertType = `${baseName}(발효예정 ${efHourStr})`;
                 else if (tmEfMs > 0 && nowMs >= tmEfMs) alertType = `${baseName}(발효중)`;
-                else alertType = '풍랑예비특보';
+                else alertType = `${baseName}(발효중)`;
             }
 
             if (fullReg.includes('서해남부') && regKo.includes('전남북부')) {
@@ -1280,7 +1289,7 @@ function buildWeatherNuriSummaryHtml(rawText) {
     records.forEach(r => {
         const isPre = r.lvl.includes('예비') || r.cmd.includes('예비') || r.cmd === '2';
         const title = isPre ? `${r.wrn}예비특보` : `${r.wrn}${r.lvl}`;
-        const areaFull = (r.regUpKo && !r.regKo.includes(r.regUpKo))
+        const areaFull = (r.regUpKo && r.regUpKo !== '해상' && !r.regKo.includes(r.regUpKo))
             ? `${r.regUpKo}(${r.regKo})`
             : r.regKo;
 
@@ -1368,7 +1377,6 @@ async function fetchKmaApi(type, authKey, timeoutMs = 12000) {
     }
 }
 
-// sea_obs.php 텍스트 파싱 공용 헬퍼 (파고부이 3개소 + 해수서 등표)
 function parseSeaObsTextData(blockText, latestTsByKey = {}) {
     if (!blockText) return 0;
     const targetSeaObs = [
@@ -1430,7 +1438,6 @@ function parseSeaObsTextData(blockText, latestTsByKey = {}) {
     return count;
 }
 
-// AWS 텍스트 파싱 헬퍼 (1단계 즉시 스냅샷 & 2단계 목포관내 16개소 최근 6시간 이력 공용 + 스마트 병합 적용)
 function parseAwsTextData(textAws) {
     if (!textAws) return 0;
     const awsLines = textAws.split('\n');
@@ -1510,7 +1517,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
 
         const results = await Promise.allSettled([
             fetchKmaApi("buoy", authKey, 10000),
-            fetchKmaApi("warn", authKey, 8000),
+            fetchKmaApi("warn", authKey, 9000),
             fetchKmaApi("aws_now", authKey, 6000),
             shouldFetchNmpnt
                 ? fetchWithTimeout(`/api/nmpnt?serviceKey=${encodeURIComponent(nmpntKey)}&_t=${nowMs}`, {}, 12000).then(r => r.json())
@@ -1810,8 +1817,8 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         }
         renderOperationBoard();
 
-        // 2단계(백그라운드): 목포관내 16개 AWS 최근 6시간(10분 간격) 실측 이력 수집 및 병합
-        fetchKmaApi("aws", authKey, 12000).then(textAwsHist => {
+        // 2단계(백그라운드): AWS 최근 3시간(10분 간격) 실측 이력 수집 및 병합
+        fetchKmaApi("aws", authKey, 15000).then(textAwsHist => {
             if (textAwsHist) {
                 parseAwsTextData(textAwsHist);
                 saveStationHistoryCache();
