@@ -115,11 +115,11 @@ function isWithinLast6Hours(sortKey) {
     return diffMs >= -15 * 60 * 1000 && diffMs <= (6 * 60 + 30) * 60 * 1000;
 }
 
-function isWithinLast3Hours(sortKey) {
+function isWithinLast1Hour(sortKey) {
     const itemUtcMs = parseSortKeyToUtcMs(sortKey);
     if (isNaN(itemUtcMs)) return false;
     const diffMs = Date.now() - itemUtcMs;
-    return diffMs >= -15 * 60 * 1000 && diffMs <= (3 * 60 + 15) * 60 * 1000;
+    return diffMs >= -15 * 60 * 1000 && diffMs <= 65 * 60 * 1000;
 }
 
 function isValidMetric(val) {
@@ -227,7 +227,7 @@ function buildContinuousHistoryForModal(stKey) {
     const stData = latestBuoyData[stKey];
     const isAws = stData && stData.type === 'aws';
     return (stationHistoryMap[stKey] || [])
-        .filter(h => (isAws ? isWithinLast3Hours(h.sortKey) : isWithinLast6Hours(h.sortKey)))
+        .filter(h => (isAws ? isWithinLast1Hour(h.sortKey) : isWithinLast6Hours(h.sortKey)))
         .sort((a, b) => String(a.sortKey).localeCompare(String(b.sortKey)));
 }
 
@@ -584,7 +584,7 @@ function parseVesselControlCriteria(rawName, decision, route, notes, ports = '')
 }
 
 // ==========================================
-// 4. 상황판 및 과거 이력 타임테이블 모달 (AWS 3시간 / 부이·등표·조사원 6시간 실측 표출)
+// 4. 상황판 및 과거 이력 타임테이블 모달 (AWS 1시간 1분단위 / 부이·등표·조사원 6시간 실측 표출)
 // ==========================================
 window.toggleMeteoDetailRow = function(shipCode) {
     const detailRow = document.getElementById(`meteo-detail-${shipCode}`);
@@ -611,7 +611,7 @@ window.openWeatherHistoryModal = function(stKey) {
     let isAws = (stData && stData.type === 'aws');
     let isWaveBuoy = (stData && stData.type === 'wavebuoy');
     let isWindOnly = (stData && (stData.type === 'nmpnt' || (stData.sigWave === null && !isAws)));
-    let rangeLabel = isAws ? '최근 3시간' : '최근 6시간';
+    let rangeLabel = isAws ? '최근 1시간' : '최근 6시간';
 
     let colSpanCount = isAws ? 5 : (isWindOnly ? 4 : (isWaveBuoy ? 4 : 6));
 
@@ -1145,7 +1145,7 @@ function renderOperationBoard() {
 }
 
 // ==========================================
-// 5. 기상특보 파싱 및 통신 엔진 (이중수신 특보 + AWS 초고속 스냅샷/3정시 + sea_obs 정시 백그라운드 수집 + 실시간 특보 지도)
+// 5. 기상특보 파싱 및 통신 엔진 (이중수신 특보 + AWS 초고속 스냅샷/1시간 1분단위 + sea_obs 정시 백그라운드 수집 + 실시간 특보 지도)
 // ==========================================
 function setSeaWarningByLatestFc(seaKey, alertType, fcTimeNum) {
     let prevFc = seaWarningTimestamps[seaKey] || 0;
@@ -1944,8 +1944,8 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         }
         renderOperationBoard();
 
-        // 2단계(백그라운드): AWS 과거 3개 정시(1h, 2h, 3h 전 정시) 실측 이력 병렬 수집 및 병합
-        fetchKmaApi("aws", authKey, 10000).then(textAwsHist => {
+        // 2단계(백그라운드): AWS 로그인(조회) 시각 기준 직전 1시간 1분 단위 실측 이력 수집 및 병합
+        fetchKmaApi("aws", authKey, 14000).then(textAwsHist => {
             if (textAwsHist) {
                 parseAwsTextData(textAwsHist);
                 saveStationHistoryCache();
