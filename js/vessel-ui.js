@@ -1,7 +1,7 @@
 // ==========================================
 // 7. 선박 기초자료 UI 렌더링 & 모달 제어
 // ==========================================
-function loadVesselAssets(cleanName, uId, shipCode) {
+function loadVesselAssets(cleanName, uId, shipCode, fallbackCleanName = '') {
     const detail = document.getElementById(`detail-info-${uId}`);
     if (!detail || detail.dataset.loaded === "true") return;
     detail.dataset.loaded = "true";
@@ -14,6 +14,7 @@ function loadVesselAssets(cleanName, uId, shipCode) {
         || override.photoUrl
         || (customShip && ((customShip.images && customShip.images.photo) || customShip.photo || customShip.photoUrl));
 
+    // 선박 대표 사진은 예비선 고유 자산을 우선 유지
     let imgEl = document.getElementById(`auto-img-${uId}`);
     if (imgEl) {
         if (photoUrl) {
@@ -28,25 +29,39 @@ function loadVesselAssets(cleanName, uId, shipCode) {
         }
     }
 
-    smartBtnV2([cleanName + '_시간'], `btn-ann-${uId}`, '📅 기본시간표', shipCode);
-    smartBtnV2([cleanName + '_특수', cleanName + '_짝수'], `btn-spc-${uId}`, '🔢 특수일/짝수', shipCode);
-    smartBtnV2([cleanName + '_하'], `btn-sum-${uId}`, '☀️ 하절기', shipCode);
-    smartBtnV2([cleanName + '_동'], `btn-win-${uId}`, '❄️ 동절기', shipCode);
-    smartBtnV2([cleanName], `btn-map-${uId}`, '🗺️ 항로도(PATIS)', null);
+    // 항로도·시간표·운규항로도·차량적재도는 승계 대상(본선 우선, 없으면 예비선 폴백)
+    let assetNames = [cleanName];
+    if (fallbackCleanName && fallbackCleanName !== cleanName) {
+        assetNames.push(fallbackCleanName);
+    }
+
+    const buildCandidates = (suffixes) => {
+        let list = [];
+        assetNames.forEach(base => {
+            suffixes.forEach(suf => list.push(base + suf));
+        });
+        return list;
+    };
+
+    smartBtnV2(buildCandidates(['_시간']), `btn-ann-${uId}`, '📅 기본시간표', shipCode);
+    smartBtnV2(buildCandidates(['_특수', '_짝수']), `btn-spc-${uId}`, '🔢 특수일/짝수', shipCode);
+    smartBtnV2(buildCandidates(['_하']), `btn-sum-${uId}`, '☀️ 하절기', shipCode);
+    smartBtnV2(buildCandidates(['_동']), `btn-win-${uId}`, '❄️ 동절기', shipCode);
+    smartBtnV2(assetNames, `btn-map-${uId}`, '🗺️ 항로도(PATIS)', null);
 
     let ruleBtns = [
-        { b: `rule-btn-1-${uId}`, base: cleanName + '_운규항로도' },
-        { b: `rule-btn-2-${uId}`, base: cleanName + '_운규항로도2' },
-        { b: `rule-btn-3-${uId}`, base: cleanName + '_운규항로도3' },
-        { b: `rule-btn-4-${uId}`, base: cleanName + '_운규항로도4' },
-        { b: `rule-btn-5-${uId}`, base: cleanName + '_운규항로도5' }
+        { b: `rule-btn-1-${uId}`, bases: buildCandidates(['_운규항로도']) },
+        { b: `rule-btn-2-${uId}`, bases: buildCandidates(['_운규항로도2']) },
+        { b: `rule-btn-3-${uId}`, bases: buildCandidates(['_운규항로도3']) },
+        { b: `rule-btn-4-${uId}`, bases: buildCandidates(['_운규항로도4']) },
+        { b: `rule-btn-5-${uId}`, bases: buildCandidates(['_운규항로도5']) }
     ];
     smartGroupScan(ruleBtns, "📄 운항관리규정 항로도");
 
     let carBtns = [
-        { b: `car-btn-1-${uId}`, base: cleanName + '_차량적재' },
-        { b: `car-btn-2-${uId}`, base: cleanName + '_차량적재2' },
-        { b: `car-btn-3-${uId}`, base: cleanName + '_차량적재3' }
+        { b: `car-btn-1-${uId}`, bases: buildCandidates(['_차량적재']) },
+        { b: `car-btn-2-${uId}`, bases: buildCandidates(['_차량적재2']) },
+        { b: `car-btn-3-${uId}`, bases: buildCandidates(['_차량적재3']) }
     ];
     smartGroupScan(carBtns, "🚗 차량적재도 참고자료");
 }
@@ -143,15 +158,31 @@ function render() {
             let groupHtml = `<div class="route-group"><div class="route-header ${isReserveGroup ? 'reserve' : ''}" onclick="toggleRoute(this.nextElementSibling)">📍 ${r} (${groups[r].length}척) <span>▼</span></div><div class="vessel-list">`;
 
             groups[r].forEach((v, idx) => {
-                let cleanName = (v.rawName || '').split('(')[0].split('\n')[0].trim().replace(/\s/g, '');
-                if (cleanName === "상동") cleanName = "도초카훼리";
-                let uId = `${cleanName}_${rIdx}_${idx}`;
+                let reserveCleanName = (v.rawName || '').split('(')[0].split('\n')[0].trim().replace(/\s/g, '');
+                if (reserveCleanName === "상동") reserveCleanName = "도초카훼리";
 
                 let deployedBadge = '';
                 let isOriginalReserve = (v.route || '').trim() === '예비선';
+                let isDeployed = isOriginalReserve && !!v.targetShip;
+
+                let targetCleanName = '';
+                if (isDeployed) {
+                    targetCleanName = (v.targetShip.rawName || '').split('(')[0].split('\n')[0].trim().replace(/\s/g, '');
+                    if (targetCleanName === "상동") targetCleanName = "도초카훼리";
+                }
+
+                // 정적 자산(항로도·시간표·운규항로도·차량적재도) 탐색 기준 이름: 대체투입 시 본선 우선, 예비선 폴백
+                let assetPrimaryName = isDeployed && targetCleanName ? targetCleanName : reserveCleanName;
+                let assetFallbackName = isDeployed && targetCleanName ? reserveCleanName : '';
+                let uId = `${assetPrimaryName}_${rIdx}_${idx}`;
+
+                // 대체투입 시 본선의 기항지, 운항결정, 비고 승계
+                let displayPorts = isDeployed ? (v.targetShip.ports || v.ports || '-') : (v.ports || '-');
+                let displayDecision = isDeployed ? (v.targetShip.decision || v.decision || '-') : (v.decision || '-');
+                let displayNotes = isDeployed ? (v.targetShip.notes || v.notes || '-') : (v.notes || '-');
 
                 let displayNameText = v.rawName || '';
-                if (isOriginalReserve && v.targetShip) {
+                if (isDeployed) {
                     let tName = (v.targetShip.rawName || '').split('(')[0].split('\n')[0].trim();
                     deployedBadge = `<span class="badge-deployed">⚡ [${tName} 대체운항 중]</span>`;
                     let reserveHeader = (v.rawName || '').split('\n')[0] || '';
@@ -168,17 +199,25 @@ function render() {
                     });
                 }
 
+                // 커스텀 시간표: 대체투입 시 본선 시간표 우선(없으면 예비선 시간표)
+                let effectiveTimetables = isDeployed
+                    ? ((v.targetShip.timetables && v.targetShip.timetables.length > 0) ? v.targetShip.timetables : (v.timetables || []))
+                    : (v.timetables || []);
+                let timetableOwnerCode = (isDeployed && v.targetShip.timetables && v.targetShip.timetables.length > 0)
+                    ? v.targetShip.code
+                    : v.code;
+
                 let ttButtonsHtml = "";
-                if (v.timetables && v.timetables.length > 0) {
-                    v.timetables.forEach((tt, tIdx) => {
-                        if (tt.title && tt.imgData) ttButtonsHtml += `<div class="btn-dynamic-tt" style="display:block;" onclick="showImg('${tt.imgData}', '${tt.title}', { type: 'timetable', shipCode: '${v.code}', ttIndex: ${tIdx}, title: '${tt.title}' })">📅 ${tt.title}</div>`;
+                if (effectiveTimetables.length > 0) {
+                    effectiveTimetables.forEach((tt, tIdx) => {
+                        if (tt.title && tt.imgData) ttButtonsHtml += `<div class="btn-dynamic-tt" style="display:block;" onclick="showImg('${tt.imgData}', '${tt.title}', { type: 'timetable', shipCode: '${timetableOwnerCode}', ttIndex: ${tIdx}, title: '${tt.title}' })">📅 ${tt.title}</div>`;
                     });
                 }
 
                 let deployBtnHtml = isOriginalReserve ? `<button class="btn-action btn-deploy-act" onclick="openDeployModal('${v.code}')">🚢 대체투입 설정</button>` : '';
 
                 groupHtml += `<div class="vessel-card ${isReserveGroup ? 'reserve' : ''} ${v.deployedTarget ? 'deployed' : ''} ${v.isHidden ? 'is-hidden' : ''}">
-                    <div class="vessel-header" data-cleanname="${cleanName}" data-uid="${uId}" data-shipcode="${v.code}" onclick="toggleVessel(this, '${cleanName}', '${uId}', '${v.code}')">
+                    <div class="vessel-header" data-cleanname="${reserveCleanName}" data-fallbackname="${assetFallbackName}" data-assetname="${assetPrimaryName}" data-uid="${uId}" data-shipcode="${v.code}" onclick="toggleVessel(this, '${assetPrimaryName}', '${uId}', '${v.code}', '${assetFallbackName}')">
                         <div class="vessel-name">${vNameHTML} ${deployedBadge} ${v.isHidden ? '<span class="badge-hidden">선박 숨김</span>' : ''}</div>
                         <div style="font-size:12px; color:#999;">▼</div>
                     </div>
@@ -188,10 +227,10 @@ function render() {
                             <tr><td class="label">선박코드</td><td>${v.code || '-'}</td></tr>
                             <tr><td class="label">소속항로</td><td><strong>${v.displayRoute}</strong> ${isOriginalReserve ? '(원 소속: 예비선)' : ''}</td></tr>
                             <tr><td class="label">선사</td><td>${v.company || '-'}</td></tr>
-                            <tr><td class="label">기항지</td><td>${(v.ports || '').replace(/\n/g, '<br>')}</td></tr>
+                            <tr><td class="label">기항지</td><td>${displayPorts.replace(/\n/g, '<br>')}</td></tr>
                             <tr><td class="label">여객정원</td><td>${v.capacity}명</td></tr>
-                            <tr><td class="label">운항결정</td><td style="font-weight:bold; color:#1A237E;">${(v.decision || '').replace(/\n/g, '<br>')}</td></tr>
-                            <tr><td class="label">비고</td><td>${(v.notes || '').replace(/\n/g, '<br>')}</td></tr>
+                            <tr><td class="label">운항결정</td><td style="font-weight:bold; color:#1A237E;">${displayDecision.replace(/\n/g, '<br>')}</td></tr>
+                            <tr><td class="label">비고</td><td>${displayNotes.replace(/\n/g, '<br>')}</td></tr>
                             ${customRowsHtml}
                         </table>
                         <div class="button-grid" id="grid-${uId}">
@@ -233,7 +272,7 @@ function render() {
             document.querySelectorAll('.vessel-header[data-uid]').forEach(hdr => {
                 const detailEl = hdr.nextElementSibling;
                 if (detailEl && getComputedStyle(detailEl).display !== 'none') {
-                    loadVesselAssets(hdr.dataset.cleanname, hdr.dataset.uid, hdr.dataset.shipcode);
+                    loadVesselAssets(hdr.dataset.assetname || hdr.dataset.cleanname, hdr.dataset.uid, hdr.dataset.shipcode, hdr.dataset.fallbackname || '');
                 }
             });
         }
@@ -363,20 +402,20 @@ window.toggleRoute = function(listEl) {
         listEl.querySelectorAll('.vessel-header[data-uid]').forEach(hdr => {
             const detailEl = hdr.nextElementSibling;
             if (detailEl && getComputedStyle(detailEl).display !== 'none') {
-                loadVesselAssets(hdr.dataset.cleanname, hdr.dataset.uid, hdr.dataset.shipcode);
+                loadVesselAssets(hdr.dataset.assetname || hdr.dataset.cleanname, hdr.dataset.uid, hdr.dataset.shipcode, hdr.dataset.fallbackname || '');
             }
         });
     }
 };
 window.toggleRefGroup = function(listEl) { listEl.style.display = (listEl.style.display === 'block') ? 'none' : 'block'; };
 
-window.toggleVessel = function(headerEl, cleanName, uId, shipCode) {
+window.toggleVessel = function(headerEl, cleanName, uId, shipCode, fallbackCleanName = '') {
     let detail = headerEl.nextElementSibling;
     let isOpening = (detail.style.display !== 'block');
     detail.style.display = isOpening ? 'block' : 'none';
 
     if (isOpening) {
-        loadVesselAssets(cleanName, uId, shipCode);
+        loadVesselAssets(cleanName, uId, shipCode, fallbackCleanName);
     }
 };
 
@@ -402,8 +441,9 @@ function smartBtnV2(baseNames, btnId, title, shipCode = null) {
 function smartGroupScan(btnGroup, baseText) {
     let checks = btnGroup.map(item => {
         return new Promise((resolve) => {
+            let bases = item.bases || [item.base];
             let attempts = [];
-            COMMON_EXTS.forEach(e => attempts.push(item.base + e));
+            bases.forEach(b => { COMMON_EXTS.forEach(e => attempts.push(b + e)); });
             let idx = 0;
             function next() {
                 if (idx >= attempts.length) { resolve({ exists: false, item: item }); return; }
