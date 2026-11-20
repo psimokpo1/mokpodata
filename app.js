@@ -25,6 +25,7 @@ let boardFilterMode = 'all';
 let countdownIntervalId = null;
 let nextRefreshRemainingSec = 300;
 let latestRawWarnText = "";
+let latestWarnTmFc = "";
 let lastNmpntFetchMs = 0;
 
 const DEFAULT_KMA_AUTHKEY = "s0C3VEw6ScOAt1RMOinDFQ";
@@ -50,6 +51,7 @@ let latestBuoyData = {
     '조도파고':     { stnId: '22500',   type: 'wavebuoy', name: '조도 파고부이',       wind: null, windDir: null, sigWave: '-', maxWave: '-' },
     '맹골수도파고': { stnId: '22481',   type: 'wavebuoy', name: '맹골수도 파고부이',   wind: null, windDir: null, sigWave: '-', maxWave: '-' },
     '진도파고':     { stnId: '22449',   type: 'wavebuoy', name: '진도 파고부이',       wind: null, windDir: null, sigWave: '-', maxWave: '-' },
+    '제주항파고':   { stnId: '22453',   type: 'wavebuoy', name: '제주항 파고부이',     wind: null, windDir: null, sigWave: '-', maxWave: '-' },
     '해수서파고':   { stnId: '959',     type: 'beacon',   name: '해수서 등표',         wind: '-', windDir: '-', sigWave: '-', maxWave: '-' },
 
     // [기상청 육상 AWS 지점 - 평균풍속 + 순간바람(gust)]
@@ -497,6 +499,9 @@ function parseVesselControlCriteria(rawName, decision, route, notes, ports = '')
     if (fullText.includes("추자도") || r.includes("제주")) {
         addSt('추자도');
         addSt('추자조사원');
+        if (r.includes("제주") || p.includes("제주")) {
+            addSt('제주항파고');
+        }
     }
 
     if (stations.length === 0) {
@@ -535,6 +540,7 @@ function parseVesselControlCriteria(rawName, decision, route, notes, ports = '')
     let isYulmokRoute = r.includes("율목") || fullText.includes("목포-율목") || fullText.includes("평수구역으로단축운항");
     let isPyungSuOnly = (fullText.includes("(평수)") && !fullText.includes("연해") && !fullText.includes("먼바다")) || isJodoPyungsu;
     let isJejuMegaShip = (tonnage >= 10000) && (r.includes("제주") || fullText.includes("제주"));
+    let hasBypassRoute = fullText.includes("우회항로") || (r.includes("목포") && r.includes("제주"));
 
     let rawAreaText = ((rawName || '') + " " + (decision || '') + " " + (notes || ''));
     let areaMatch = rawAreaText.match(/\(([^)]*(?:평수|연해|앞바다|먼바다|근해)[^)]*)\)/);
@@ -571,7 +577,8 @@ function parseVesselControlCriteria(rawName, decision, route, notes, ports = '')
         isPyungSuOnly: isPyungSuOnly,
         isJodoPyungsu: isJodoPyungsu,
         isYulmokRoute: isYulmokRoute,
-        isJejuMegaShip: isJejuMegaShip
+        isJejuMegaShip: isJejuMegaShip,
+        hasBypassRoute: hasBypassRoute
     };
 }
 
@@ -887,7 +894,8 @@ function renderOperationBoard() {
                     isPyungSuOnly: targetParsed.isPyungSuOnly,
                     isJodoPyungsu: targetParsed.isJodoPyungsu,
                     isYulmokRoute: targetParsed.isYulmokRoute,
-                    isJejuMegaShip: false
+                    isJejuMegaShip: false,
+                    hasBypassRoute: targetParsed.hasBypassRoute
                 };
             }
 
@@ -912,16 +920,31 @@ function renderOperationBoard() {
             let hasRealIssuedWarning = false; 
             let hasPreWarning = false;
             let hasGaleGyeongbo = false;
+            let isUsingBypassRoute = false;
 
             if (parsed.relatedSeas && parsed.relatedSeas.length > 0) {
                 for (let sea of parsed.relatedSeas) {
                     let alertType = activeSeaWarnings[sea];
                     if (alertType) {
                         activeWarningItems.push({ sea: sea, alert: alertType });
-                        if (alertType.includes('예비') || alertType.includes('예정')) hasPreWarning = true;
-                        else {
+                        if (alertType.includes('예비') || alertType.includes('예정')) {
+                            hasPreWarning = true;
+                        } else {
                             hasRealIssuedWarning = true;
-                            if (alertType.includes('경보')) hasGaleGyeongbo = true;
+                            if (alertType.includes('경보')) {
+                                // 목포-제주 우회항로 특례: 서해남부남쪽안쪽먼바다와 남해서부서쪽먼바다 둘 다 경보일 때만 경보 통제, 한쪽만 주의보 이하이면 우회 가능
+                                if (parsed.hasBypassRoute && (sea === '서해남부남쪽안쪽먼바다' || sea === '남해서부서쪽먼바다')) {
+                                    const westSouthAlert = activeSeaWarnings['서해남부남쪽안쪽먼바다'] || '';
+                                    const southWestAlert = activeSeaWarnings['남해서부서쪽먼바다'] || '';
+                                    if (westSouthAlert.includes('경보') && southWestAlert.includes('경보')) {
+                                        hasGaleGyeongbo = true;
+                                    } else {
+                                        isUsingBypassRoute = true;
+                                    }
+                                } else {
+                                    hasGaleGyeongbo = true;
+                                }
+                            }
                         }
                     }
                 }
@@ -1018,10 +1041,17 @@ function renderOperationBoard() {
                 criteriaDisplay = `풍속 ${wLimit}m/s<br>${parsed.sigWaveLimit ? '유의 ' + parsed.sigWaveLimit + 'm' : '파고 2.0m'}`;
             }
 
+            // 1순위: 관측계소 실측치(풍속·파고) 통제기준 초과 여부를 최우선 검사
             if (parsed.tonnage >= 2000) {
-                if (hasGaleGyeongbo || isAnyWindDanger || isAnyWaveDanger) { status = 'danger'; statusBadge = '<span class="status-badge badge-danger">🔴 통제위험</span>'; countDanger++; }
-                else if (isAnyWindWarn || isAnyWaveWarn) { status = 'warn'; statusBadge = '<span class="status-badge badge-warn">🟡 통제주의</span>'; countWarn++; }
-                else { status = 'ok'; statusBadge = '<span class="status-badge badge-ok">🟢 정상 (2,000G/T 이상)</span>'; countOk++; }
+                if (hasGaleGyeongbo || isAnyWindDanger || isAnyWaveDanger) {
+                    status = 'danger'; statusBadge = '<span class="status-badge badge-danger">🔴 통제위험</span>'; countDanger++;
+                } else if (isAnyWindWarn || isAnyWaveWarn) {
+                    status = 'warn'; statusBadge = '<span class="status-badge badge-warn">🟡 통제주의</span>'; countWarn++;
+                } else if (isUsingBypassRoute) {
+                    status = 'ok'; statusBadge = '<span class="status-badge badge-ok">🟢 정상 (우회항로 가능)</span>'; countOk++;
+                } else {
+                    status = 'ok'; statusBadge = '<span class="status-badge badge-ok">🟢 정상 (2,000G/T 이상)</span>'; countOk++;
+                }
             } else if (isAutoControlledByWarning) {
                 status = 'danger'; statusBadge = '<span class="status-badge badge-danger">🔴 자동통제(특보발효)</span>'; countDanger++;
             } else if (parsed.isYulmokRoute) {
@@ -1114,7 +1144,7 @@ function renderOperationBoard() {
 }
 
 // ==========================================
-// 5. 기상특보 파싱 및 통신 엔진 (이중수신 특보 + AWS 3시간 실측 + sea_obs 정시 백그라운드 수집 + 날씨누리 특보 모달)
+// 5. 기상특보 파싱 및 통신 엔진 (이중수신 특보 + AWS 초고속 스냅샷/3정시 + sea_obs 정시 백그라운드 수집 + 실시간 특보 지도)
 // ==========================================
 function setSeaWarningByLatestFc(seaKey, alertType, fcTimeNum) {
     let prevFc = seaWarningTimestamps[seaKey] || 0;
@@ -1161,6 +1191,7 @@ function parseWeatherWarnings(rawText) {
     }
 
     const nowMs = Date.now();
+    let maxFcStr = "";
 
     const csvRecords = parseKmaWarnRecords(rawText);
     if (csvRecords.length > 0) {
@@ -1172,7 +1203,12 @@ function parseWeatherWarnings(rawText) {
             const lvl = rec.lvl.replace(/\s/g, '');
             const cmd = rec.cmd.replace(/\s/g, '');
             const tmEfStr = rec.tmEf.replace(/\D/g, '');
-            const fcTimeNum = parseInt(rec.tmFc.replace(/\D/g, '') || '0', 10) || 0;
+            const fcDigits = rec.tmFc.replace(/\D/g, '').substring(0, 12);
+            const fcTimeNum = parseInt(fcDigits || '0', 10) || 0;
+
+            if (fcDigits.length >= 12 && fcDigits > maxFcStr) {
+                maxFcStr = fcDigits;
+            }
 
             if (!wrn.includes('풍랑') && !wrn.includes('해상')) return;
 
@@ -1216,6 +1252,7 @@ function parseWeatherWarnings(rawText) {
                 setSeaWarningByLatestFc('제주도북부앞바다', alertType, fcTimeNum);
             }
         });
+        if (maxFcStr) latestWarnTmFc = maxFcStr;
         return;
     }
 
@@ -1229,7 +1266,9 @@ function parseWeatherWarnings(rawText) {
             let wrn = String(item.WRN || '').replace(/\s/g, '');
             let lvl = String(item.LVL || '').replace(/\s/g, '');
             let cmd = String(item.CMD || '').replace(/\s/g, '');
-            let fcTimeNum = parseInt(String(item.TM_FC || '0').replace(/\D/g, ''), 10) || 0;
+            let fcDigits = String(item.TM_FC || '0').replace(/\D/g, '').substring(0, 12);
+            let fcTimeNum = parseInt(fcDigits, 10) || 0;
+            if (fcDigits.length >= 12 && fcDigits > maxFcStr) maxFcStr = fcDigits;
             if (cmd.includes('해제') || cmd === '3') return;
             if (!wrn.includes('풍랑') && !wrn.includes('해상')) return;
 
@@ -1242,6 +1281,7 @@ function parseWeatherWarnings(rawText) {
             else if (fullReg.includes('남해서부') && regKo.includes('서쪽먼바다')) setSeaWarningByLatestFc('남해서부서쪽먼바다', alertType, fcTimeNum);
             else if (fullReg.includes('제주도') && regKo.includes('북부앞바다')) setSeaWarningByLatestFc('제주도북부앞바다', alertType, fcTimeNum);
         });
+        if (maxFcStr) latestWarnTmFc = maxFcStr;
     } catch (e) {}
 }
 
@@ -1335,6 +1375,81 @@ function buildWeatherNuriSummaryHtml(rawText) {
     `;
 }
 
+// 기상청 특보 발효현황 지도 이미지 로드 실패 시 실제 발효 데이터 기반 SVG 해역도 백업 렌더링
+window.renderFallbackWarningSvgMap = function(imgEl) {
+    if (!imgEl || !imgEl.parentElement) return;
+    const container = imgEl.parentElement;
+    imgEl.style.display = 'none';
+
+    const getSeaStyle = (seaKey) => {
+        const st = activeSeaWarnings[seaKey] || '';
+        if (st.includes('경보')) return { fill: 'url(#hatch-cyan)', label: '경보', color: '#0369A1' };
+        if (st.includes('주의보')) return { fill: '#38BDF8', label: '주의보', color: '#0284C7' };
+        if (st.includes('예비')) return { fill: '#BAE6FD', label: '예비', color: '#0369A1' };
+        return { fill: '#F8FAFC', label: '-', color: '#64748B' };
+    };
+
+    const sNorthFar = getSeaStyle('서해남부북쪽안쪽먼바다');
+    const sSouthFar = getSeaStyle('서해남부남쪽안쪽먼바다');
+    const sFrontN   = getSeaStyle('서해남부앞바다(전남북부)');
+    const sFrontC   = getSeaStyle('서해남부앞바다(전남중부)');
+    const sFrontS   = getSeaStyle('서해남부앞바다(전남남부)');
+    const sSouthW   = getSeaStyle('남해서부서쪽먼바다');
+    const sJejuN    = getSeaStyle('제주도북부앞바다');
+
+    const svgWrap = document.createElement('div');
+    svgWrap.innerHTML = `
+        <svg viewBox="0 0 340 330" style="width:100%; max-width:360px; border:1px solid #CBD5E1; border-radius:6px; background:#E2E8F0;">
+            <defs>
+                <pattern id="hatch-cyan" width="8" height="8" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
+                    <rect width="8" height="8" fill="#67E8F9"/>
+                    <line x1="0" y1="0" x2="0" y2="8" stroke="#0284C7" stroke-width="2.5"/>
+                </pattern>
+            </defs>
+            <rect x="10" y="15" width="115" height="85" fill="${sNorthFar.fill}" stroke="#334155" stroke-width="1.2"/>
+            <text x="67" y="52" font-size="10" font-weight="bold" text-anchor="middle" fill="#0F172A">서해남부북쪽</text>
+            <text x="67" y="65" font-size="10" font-weight="bold" text-anchor="middle" fill="#0F172A">안쪽먼바다</text>
+            <text x="67" y="80" font-size="10" font-weight="bold" text-anchor="middle" fill="${sNorthFar.color}">[${sNorthFar.label}]</text>
+
+            <rect x="10" y="100" width="115" height="95" fill="${sSouthFar.fill}" stroke="#334155" stroke-width="1.2"/>
+            <text x="67" y="140" font-size="10" font-weight="bold" text-anchor="middle" fill="#0F172A">서해남부남쪽</text>
+            <text x="67" y="153" font-size="10" font-weight="bold" text-anchor="middle" fill="#0F172A">안쪽먼바다</text>
+            <text x="67" y="168" font-size="10" font-weight="bold" text-anchor="middle" fill="${sSouthFar.color}">[${sSouthFar.label}]</text>
+
+            <rect x="125" y="15" width="95" height="55" fill="${sFrontN.fill}" stroke="#334155" stroke-width="1.2"/>
+            <text x="172" y="40" font-size="10" font-weight="bold" text-anchor="middle" fill="#0F172A">전남북부앞바다</text>
+            <text x="172" y="54" font-size="10" font-weight="bold" text-anchor="middle" fill="${sFrontN.color}">[${sFrontN.label}]</text>
+
+            <rect x="125" y="70" width="95" height="65" fill="${sFrontC.fill}" stroke="#334155" stroke-width="1.2"/>
+            <text x="172" y="98" font-size="10" font-weight="bold" text-anchor="middle" fill="#0F172A">전남중부앞바다</text>
+            <text x="172" y="112" font-size="10" font-weight="bold" text-anchor="middle" fill="${sFrontC.color}">[${sFrontC.label}]</text>
+
+            <rect x="125" y="135" width="95" height="60" fill="${sFrontS.fill}" stroke="#334155" stroke-width="1.2"/>
+            <text x="172" y="162" font-size="10" font-weight="bold" text-anchor="middle" fill="#0F172A">전남남부앞바다</text>
+            <text x="172" y="176" font-size="10" font-weight="bold" text-anchor="middle" fill="${sFrontS.color}">[${sFrontS.label}]</text>
+
+            <rect x="125" y="195" width="135" height="60" fill="${sSouthW.fill}" stroke="#334155" stroke-width="1.2"/>
+            <text x="192" y="222" font-size="10" font-weight="bold" text-anchor="middle" fill="#0F172A">남해서부서쪽먼바다</text>
+            <text x="192" y="236" font-size="10" font-weight="bold" text-anchor="middle" fill="${sSouthW.color}">[${sSouthW.label}]</text>
+
+            <rect x="125" y="255" width="135" height="55" fill="${sJejuN.fill}" stroke="#334155" stroke-width="1.2"/>
+            <text x="192" y="280" font-size="10" font-weight="bold" text-anchor="middle" fill="#0F172A">제주도북부앞바다</text>
+            <text x="192" y="294" font-size="10" font-weight="bold" text-anchor="middle" fill="${sJejuN.color}">[${sJejuN.label}]</text>
+
+            <polygon points="220,15 330,15 330,195 220,195 232,140 225,85" fill="#F1F5F9" stroke="#475569" stroke-width="1.2"/>
+            <text x="280" y="105" font-size="11" font-weight="bold" text-anchor="middle" fill="#334155">전라남도</text>
+            <text x="280" y="122" font-size="9.5" text-anchor="middle" fill="#64748B">(목포·신안·진도)</text>
+
+            <rect x="12" y="268" width="102" height="44" rx="4" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1"/>
+            <rect x="18" y="275" width="12" height="10" fill="#38BDF8" stroke="#334155" stroke-width="0.6"/>
+            <text x="35" y="284" font-size="9.5" font-weight="bold" fill="#1E293B">풍랑주의보</text>
+            <rect x="18" y="292" width="12" height="10" fill="url(#hatch-cyan)" stroke="#334155" stroke-width="0.6"/>
+            <text x="35" y="301" font-size="9.5" font-weight="bold" fill="#1E293B">풍랑경보(빗금)</text>
+        </svg>
+    `;
+    container.appendChild(svgWrap);
+};
+
 async function fetchWithTimeout(url, options = {}, timeout = 8000) {
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeout);
@@ -1383,6 +1498,7 @@ function parseSeaObsTextData(blockText, latestTsByKey = {}) {
         { id: '22500', key: '조도파고' },
         { id: '22481', key: '맹골수도파고' },
         { id: '22449', key: '진도파고' },
+        { id: '22453', key: '제주항파고' },
         { id: '959',   key: '해수서파고' }
     ];
 
@@ -1555,10 +1671,11 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
                 { id: '22500', key: '조도파고' },
                 { id: '22481', key: '맹골수도파고' },
                 { id: '22449', key: '진도파고' },
+                { id: '22453', key: '제주항파고' },
                 { id: '959',   key: '해수서파고' }
             ];
 
-            ['조도파고', '맹골수도파고', '진도파고'].forEach(wbKey => {
+            ['조도파고', '맹골수도파고', '진도파고', '제주항파고'].forEach(wbKey => {
                 if (Array.isArray(stationHistoryMap[wbKey])) {
                     stationHistoryMap[wbKey] = stationHistoryMap[wbKey].filter(h => parseFloat(h.sigWave) > 0);
                 }
@@ -1817,8 +1934,8 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         }
         renderOperationBoard();
 
-        // 2단계(백그라운드): AWS 최근 3시간(10분 간격) 실측 이력 수집 및 병합
-        fetchKmaApi("aws", authKey, 15000).then(textAwsHist => {
+        // 2단계(백그라운드): AWS 과거 3개 정시(1h, 2h, 3h 전 정시) 실측 이력 병렬 수집 및 병합
+        fetchKmaApi("aws", authKey, 10000).then(textAwsHist => {
             if (textAwsHist) {
                 parseAwsTextData(textAwsHist);
                 saveStationHistoryCache();
@@ -1827,7 +1944,7 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
         }).catch(() => {});
 
         // 파고부이/등표 이력이 3건 미만이거나 수동 새로고침일 때만 과거 6개 정시 이력 조회
-        const needSeaObsBackfill = (!isAuto) || ['해수서파고', '진도파고', '조도파고', '맹골수도파고'].some(
+        const needSeaObsBackfill = (!isAuto) || ['해수서파고', '진도파고', '조도파고', '맹골수도파고', '제주항파고'].some(
             k => !Array.isArray(stationHistoryMap[k]) || stationHistoryMap[k].filter(h => isWithinLast6Hours(h.sortKey)).length < 3
         );
         if (needSeaObsBackfill) {
@@ -1916,7 +2033,7 @@ window.manualRefreshWeather = function() {
 };
 
 // ==========================================
-// 7. 선박 기초자료 UI 렌더링 & 모달 제어 (사진/버튼 자동 로드 보완)
+// 7. 선박 기초자료 UI 렌더링 & 모달 제어
 // ==========================================
 function loadVesselAssets(cleanName, uId, shipCode) {
     const detail = document.getElementById(`detail-info-${uId}`);
@@ -2734,7 +2851,7 @@ window.openRawWarnModal = () => {
     if (!modal) return;
 
     const summaryHtml = buildWeatherNuriSummaryHtml(latestRawWarnText);
-    const mapImgUrl = `/api/kma?type=warn_img&_t=${Date.now()}`;
+    const mapImgUrl = `/api/kma?type=warn_img&tmFc=${encodeURIComponent(latestWarnTmFc)}&_t=${Date.now()}`;
 
     modal.innerHTML = `
         <div style="background:#fff; width:920px; max-width:96vw; max-height:90vh; border-radius:12px; box-shadow:0 12px 30px rgba(0,0,0,0.3); display:flex; flex-direction:column; overflow:hidden;">
@@ -2744,22 +2861,19 @@ window.openRawWarnModal = () => {
             </div>
             <div style="padding:18px; overflow-y:auto; flex:1; background:#F8FAFC;">
                 <div style="display:flex; flex-wrap:wrap; gap:18px; align-items:flex-start;">
-                    <!-- 좌측: 기상특보 해역지도 -->
                     <div style="flex:1 1 320px; background:#fff; border:1px solid #CBD5E1; border-radius:8px; padding:10px; text-align:center;">
                         <div style="font-size:13px; font-weight:bold; color:#0F172A; margin-bottom:8px;">🗺️ 특보 발효현황 해역도</div>
                         <img src="${mapImgUrl}"
-                             onerror="this.onerror=null; this.src='기상특보 해역지도.png';"
+                             onerror="renderFallbackWarningSvgMap(this)"
                              alt="기상특보 발효현황 지도"
                              style="width:100%; max-width:380px; height:auto; border-radius:6px; border:1px solid #E2E8F0;">
                     </div>
-                    <!-- 우측: 특보 발효현황 & 특보 내용 -->
                     <div style="flex:1.4 1 400px; background:#fff; border:1px solid #CBD5E1; border-radius:8px; padding:14px;">
                         <div style="font-size:14px; font-weight:bold; color:#0F172A; margin-bottom:8px;">▪ 특보 발효현황 및 특보 내용</div>
                         ${summaryHtml}
                     </div>
                 </div>
 
-                <!-- 하단: 접이식 원본 전문 확인 -->
                 <details style="margin-top:14px; background:#fff; border:1px solid #CBD5E1; border-radius:8px; padding:10px 14px;">
                     <summary style="cursor:pointer; font-size:12.5px; font-weight:bold; color:#475569;">📄 기상청 API 원본 전문 보기 (클릭 시 펼침)</summary>
                     <textarea readonly style="width:100%; height:160px; margin-top:8px; font-family:monospace; font-size:11.5px; border:1px solid #E2E8F0; border-radius:6px; padding:8px; background:#F1F5F9; color:#334155;">${latestRawWarnText || ''}</textarea>
