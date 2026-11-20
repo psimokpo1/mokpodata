@@ -164,9 +164,9 @@
         </div>
         <div style="font-size:12px; color:#64748B; background:#F8FAFC; padding:10px; border-radius:6px; line-height:1.6; margin-top:10px;">
             💡 <strong>운항 편성 원칙:</strong><br>
-            • <strong>고유 제원 유지:</strong> 예비선 본래의 톤수(G/T)와 정원은 유지됩니다.<br>
-            • <strong>기상/항해제원 승계:</strong> 선택한 본선의 통제기준, 관측계소, 특보구역, 운항거리를 승계합니다.<br>
-            • <strong>항로 영구 유지:</strong> 본선을 숨겨도 예비선이 항로를 승계하므로 화면에서 항로가 사라지지 않습니다.
+- <strong>고유 제원 유지:</strong> 예비선 본래의 톤수(G/T)와 정원은 유지됩니다.<br>
+- <strong>기상/항해제원 승계:</strong> 선택한 본선의 통제기준, 관측계소, 특보구역, 운항거리를 승계합니다.<br>
+- <strong>항로 영구 유지:</strong> 본선을 숨겨도 예비선이 항로를 승계하므로 화면에서 항로가 사라지지 않습니다.
         </div>
         <div class="edit-actions" style="margin-top:16px;">
             <button class="btn-cancel" onclick="closeDeployModal()">취소</button>
@@ -309,9 +309,12 @@
     </div>
 </div>
 
-<!-- 💡 분리된 선박 데이터 및 메인 스크립트 연결 (순서 필수) -->
+<!-- 💡 분리된 선박 데이터 및 4개 모듈 스크립트 연결 (순서 필수) -->
 <script src="ships-data.js"></script>
-<script src="app.js"></script>
+<script src="js/state-and-auth.js"></script>
+<script src="js/weather-engine.js"></script>
+<script src="js/board-engine.js"></script>
+<script src="js/vessel-ui.js"></script>
 
 </body>
 </html>
