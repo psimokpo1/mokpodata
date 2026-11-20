@@ -2079,13 +2079,6 @@ window.fetchWeatherRealtime = async (isAuto = false) => {
     }
 };
 
-    } catch (err) {
-        console.error("수신 전체 실패:", err);
-        if (recvEl) recvEl.innerText = `⚠️ 통신 차단 또는 오류`;
-        renderOperationBoard();
-    }
-};
-
 // ==========================================
 // 6. 타이머 제어
 // ==========================================
