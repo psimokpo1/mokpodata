@@ -648,13 +648,31 @@ function renderOperationBoard() {
                 else { status = 'ok'; statusBadge = `<span class="status-badge badge-ok">🟢 정상</span>`; countOk++; }
             } else if (parsed.isPyungSuOnly) {
                 if (isAnyWindDanger || isAnyWaveDanger) { status = 'danger'; statusBadge = '<span class="status-badge badge-danger">🔴 통제위험</span>'; countDanger++; }
-                else if (isAnyWindWarn || isAnyWaveWarn) { status = 'warn'; statusBadge = '<span class="status-badge badge-warn">🟡 통제주의</span>'; countWarn++; }
-                else { status = 'ok'; statusBadge = `<span class="status-badge badge-ok">🟢 정상 (평수)</span>`; countOk++; }
+                else if (isAnyWindWarn || isAnyWaveWarn || hasPreWarning) {
+                    status = 'warn';
+                    statusBadge = parsed.isCaptainOpinion
+                        ? '<span class="status-badge badge-warn">🟡 통제주의(선장협의)</span>'
+                        : '<span class="status-badge badge-warn">🟡 통제주의</span>';
+                    countWarn++;
+                } else {
+                    status = 'ok';
+                    statusBadge = `<span class="status-badge badge-ok">🟢 정상 (평수)</span>`;
+                    countOk++;
+                }
             } else if (parsed.stations && parsed.stations.length > 0) {
-                if (isAnyWindDanger || isAnyWaveDanger) { status = 'danger'; statusBadge = '<span class="status-badge badge-danger">🔴 통제위험</span>'; countDanger++; }
-                else if (isAnyWindWarn || isAnyWaveWarn || hasPreWarning) { status = 'warn'; statusBadge = '<span class="status-badge badge-warn">🟡 통제주의(예비/근접)</span>'; countWarn++; }
-                else if (parsed.isCaptainOpinion) { status = 'captain'; statusBadge = '<span class="status-badge badge-captain">🔵 선장협의</span>'; countSpecial++; }
-                else { status = 'ok'; statusBadge = '<span class="status-badge badge-ok">🟢 정상</span>'; countOk++; }
+                if (isAnyWindDanger || isAnyWaveDanger) {
+                    status = 'danger'; statusBadge = '<span class="status-badge badge-danger">🔴 통제위험</span>'; countDanger++;
+                } else if (isAnyWindWarn || isAnyWaveWarn || hasPreWarning) {
+                    status = 'warn';
+                    statusBadge = parsed.isCaptainOpinion
+                        ? '<span class="status-badge badge-warn">🟡 통제주의(선장협의)</span>'
+                        : '<span class="status-badge badge-warn">🟡 통제주의(예비/근접)</span>';
+                    countWarn++;
+                } else {
+                    status = 'ok';
+                    statusBadge = '<span class="status-badge badge-ok">🟢 정상</span>';
+                    countOk++;
+                }
             } else if (parsed.isCaptainOpinion) {
                 status = 'captain'; statusBadge = '<span class="status-badge badge-captain">🔵 선장협의</span>'; countSpecial++;
             } else if (parsed.isOfficeDecision) {
