@@ -319,7 +319,7 @@ function buildMeteoSubTableHtml(parsed, shipName, routeName) {
         let windStyle = '';
         if (hasWind) {
             if (windVal >= wLimit) windStyle = 'color:#DC2626; font-weight:bold; background:#FEE2E2;';
-            else if (windVal >= wLimit * 0.85) windStyle = 'color:#D97706; font-weight:bold; background:#FEF3C7;';
+            else if (windVal >= wLimit * 0.85 || (hasGust && gustVal >= wLimit * 0.85)) windStyle = 'color:#D97706; font-weight:bold; background:#FEF3C7;';
         }
 
         const sigVal = parseFloat(stData.sigWave);
@@ -578,8 +578,16 @@ function renderOperationBoard() {
                     let hasRealWind = (!isWaveBuoy && stData.wind !== '-' && stData.wind !== null && !isNaN(windVal) && windVal >= 0 && windVal < 100);
                     let hasRealGust = ((isAws || stData.type === 'buoy') && stData.gust !== '-' && stData.gust !== null && !isNaN(gustVal) && gustVal >= 0 && gustVal < 120);
 
+                    // 평균풍속 기준 위험/주의 판정
                     if (hasRealWind && (windVal >= wLimit)) isAnyWindDanger = true;
                     else if (hasRealWind && (windVal >= (wLimit * 0.85))) isAnyWindWarn = true;
+
+                    // 순간풍속(거스트)이 통제기준 이상이면 통제주의로 상향
+                    if (hasRealGust && (gustVal >= wLimit)) {
+                        if (!isAnyWindDanger) isAnyWindWarn = true;
+                    } else if (hasRealGust && (gustVal >= (wLimit * 0.85))) {
+                        if (!isAnyWindDanger) isAnyWindWarn = true;
+                    }
 
                     let sigVal = Number(stData.sigWave);
                     let maxVal = Number(stData.maxWave);
