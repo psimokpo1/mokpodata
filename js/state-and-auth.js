@@ -65,6 +65,7 @@ let latestBuoyData = {
     '홍도AWS':      { stnId: '798',     type: 'aws',      name: '홍도 AWS',            wind: '-', gust: '-', windDir: '-', sigWave: null, maxWave: null },
     '서거차AWS':    { stnId: '697',     type: 'aws',      name: '서거차 AWS',          wind: '-', gust: '-', windDir: '-', sigWave: null, maxWave: null },
     '상조도':       { stnId: '718',     type: 'aws',      name: '상조도 AWS',          wind: '-', gust: '-', windDir: '-', sigWave: null, maxWave: null },
+    '수유AWS':      { stnId: '772',     type: 'aws',      name: '수유 AWS',            wind: '-', gust: '-', windDir: '-', sigWave: null, maxWave: null },
     '하의도':       { stnId: '716',     type: 'aws',      name: '하의도 AWS',          wind: '-', gust: '-', windDir: '-', sigWave: null, maxWave: null },
     '안좌AWS':      { stnId: '771',     type: 'aws',      name: '안좌 AWS',            wind: '-', gust: '-', windDir: '-', sigWave: null, maxWave: null },
     '압해도':       { stnId: '789',     type: 'aws',      name: '압해도 AWS',          wind: '-', gust: '-', windDir: '-', sigWave: null, maxWave: null },
