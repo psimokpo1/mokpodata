@@ -68,7 +68,7 @@ function parseVesselControlCriteria(rawName, decision, route, notes, ports = '')
     if (r.includes("율목") || r.includes("서거차") || r.includes("죽도") || p.includes("율목") || p.includes("서거차")) {
         addSt('조도파고'); addSt('맹골수도파고'); addSt('진도파고'); addSt('해수서파고'); addSt('하조도'); addSt('서거차조위'); addSt('서거차AWS'); addSt('상조도');
     } else if (r.includes("쉬미-가사") || p.includes("창유") || p.includes("조도")) {
-        addSt('조도파고'); addSt('진도파고'); addSt('하조도');
+        addSt('조도파고'); addSt('진도파고'); addSt('하조도'); addSt('수유AWS');
     }
 
     if (fullText.includes("옥도")) addSt('옥도');
