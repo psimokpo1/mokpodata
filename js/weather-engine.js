@@ -29,7 +29,8 @@ function parseKmaWarnRecords(rawText) {
                 tmEf: cols[5] || '',
                 wrn: cols[6] || '',
                 lvl: cols[7] || '',
-                cmd: cmd
+                cmd: cmd,
+                endTime: cols[9] || cols[10] || ''
             });
         }
     });
@@ -163,6 +164,16 @@ function formatWarnTimestampKo(tmStr) {
     return `${yyyy}년 ${mm}월 ${dd}일(${dayName}) ${hh}:${min}`;
 }
 
+function formatShortWarnTime(tmStr) {
+    const digits = String(tmStr || '').replace(/\D/g, '');
+    if (digits.length < 10) return '-';
+    const mm = digits.substring(4, 6);
+    const dd = digits.substring(6, 8);
+    const hh = digits.substring(8, 10);
+    const min = digits.length >= 12 ? digits.substring(10, 12) : '00';
+    return `${mm}-${dd} ${hh}:${min}`;
+}
+
 function buildWeatherNuriSummaryHtml(rawText) {
     const records = parseKmaWarnRecords(rawText);
     if (records.length === 0) {
@@ -235,6 +246,80 @@ function buildWeatherNuriSummaryHtml(rawText) {
         </div>
         <div style="background:#FFFFFF; border:1px solid #CBD5E1; border-radius:6px; padding:14px; max-height:310px; overflow-y:auto; font-size:13.5px; color:#1E293B;">
             ${bodyLinesHtml || '<div style="color:#64748B;">발효 중인 특보 내역이 없습니다.</div>'}
+        </div>
+    `;
+}
+
+function buildWeatherDetailTableHtml(rawText) {
+    const records = parseKmaWarnRecords(rawText);
+    if (!records || records.length === 0) {
+        return `<div style="padding:14px; text-align:center; color:#64748B; font-size:12.5px;">표시할 특보 상세내역이 없습니다.</div>`;
+    }
+
+    let rowsHtml = '';
+    records.forEach(r => {
+        const isPre = r.lvl.includes('예비') || r.cmd.includes('예비') || r.cmd === '2';
+        const levelText = isPre ? '예비특보' : (r.lvl || '-');
+        const areaFull = (r.regUpKo && r.regUpKo !== '해상' && !r.regKo.includes(r.regUpKo))
+            ? `${r.regUpKo}(${r.regKo})`
+            : (r.regKo || '-');
+
+        let rowBg = '#FFFFFF';
+        let badgeBg = '#E0F2FE';
+        let badgeColor = '#0369A1';
+        if (levelText.includes('경보')) {
+            rowBg = '#FEF2F2';
+            badgeBg = '#FEE2E2';
+            badgeColor = '#B91C1C';
+        } else if (levelText.includes('예비')) {
+            rowBg = '#FFFBEB';
+            badgeBg = '#FEF3C7';
+            badgeColor = '#B45309';
+        } else if (levelText.includes('주의')) {
+            rowBg = '#F0FDF4';
+            badgeBg = '#DCFCE7';
+            badgeColor = '#15803D';
+        }
+
+        const endStr = r.endTime && !/^\d+$/.test(r.endTime) ? r.endTime : (r.endTime ? formatShortWarnTime(r.endTime) : '-');
+
+        rowsHtml += `
+            <tr style="background:${rowBg};">
+                <td style="padding:8px 10px; border-bottom:1px solid #E2E8F0; text-align:center; font-weight:bold; color:#0F172A;">${r.wrn || '-'}</td>
+                <td style="padding:8px 10px; border-bottom:1px solid #E2E8F0; text-align:center;">
+                    <span style="display:inline-block; padding:2px 8px; border-radius:999px; font-size:11.5px; font-weight:bold; background:${badgeBg}; color:${badgeColor};">${levelText}</span>
+                </td>
+                <td style="padding:8px 10px; border-bottom:1px solid #E2E8F0; color:#1E293B; line-height:1.45;">${areaFull}</td>
+                <td style="padding:8px 10px; border-bottom:1px solid #E2E8F0; text-align:center; white-space:nowrap; color:#475569;">${formatShortWarnTime(r.tmFc)}</td>
+                <td style="padding:8px 10px; border-bottom:1px solid #E2E8F0; text-align:center; white-space:nowrap; color:#475569;">${formatShortWarnTime(r.tmEf)}</td>
+                <td style="padding:8px 10px; border-bottom:1px solid #E2E8F0; text-align:center; white-space:nowrap; color:#64748B;">${endStr}</td>
+            </tr>
+        `;
+    });
+
+    return `
+        <div style="margin-top:16px; background:#fff; border:1px solid #CBD5E1; border-radius:8px; padding:12px 14px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                <span style="font-size:14px; font-weight:bold; color:#0F172A;">📋 특보 상세내역 보기</span>
+                <span style="font-size:11.5px; color:#64748B;">총 ${records.length}건</span>
+            </div>
+            <div style="max-height:260px; overflow-y:auto; border:1px solid #E2E8F0; border-radius:6px;">
+                <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+                    <thead>
+                        <tr style="background:#F1F5F9; color:#334155; position:sticky; top:0; z-index:1;">
+                            <th style="padding:8px 10px; border-bottom:2px solid #CBD5E1; width:10%;">특보</th>
+                            <th style="padding:8px 10px; border-bottom:2px solid #CBD5E1; width:12%;">수준</th>
+                            <th style="padding:8px 10px; border-bottom:2px solid #CBD5E1; text-align:left;">해당지역</th>
+                            <th style="padding:8px 10px; border-bottom:2px solid #CBD5E1; width:13%;">발표시각</th>
+                            <th style="padding:8px 10px; border-bottom:2px solid #CBD5E1; width:13%;">발효시각</th>
+                            <th style="padding:8px 10px; border-bottom:2px solid #CBD5E1; width:14%;">해제예고</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rowsHtml}
+                    </tbody>
+                </table>
+            </div>
         </div>
     `;
 }
@@ -909,6 +994,7 @@ window.openRawWarnModal = () => {
     if (!modal) return;
 
     const summaryHtml = buildWeatherNuriSummaryHtml(latestRawWarnText);
+    const detailTableHtml = buildWeatherDetailTableHtml(latestRawWarnText);
     const mapImgUrl = `/api/kma?type=warn_img&tmFc=${encodeURIComponent(latestWarnTmFc)}&tmEf=${encodeURIComponent(latestWarnTmEf)}&_t=${Date.now()}`;
 
     modal.innerHTML = `
@@ -931,6 +1017,8 @@ window.openRawWarnModal = () => {
                         ${summaryHtml}
                     </div>
                 </div>
+
+                ${detailTableHtml}
 
                 <details style="margin-top:14px; background:#fff; border:1px solid #CBD5E1; border-radius:8px; padding:10px 14px;">
                     <summary style="cursor:pointer; font-size:12.5px; font-weight:bold; color:#475569;">📄 기상청 API 원본 전문 보기 (클릭 시 펼침)</summary>
