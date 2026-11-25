@@ -381,6 +381,20 @@ function buildNavAreaBadgeHtml(navArea) {
     return ` <span style="font-size:11px; font-weight:600; padding:1px 5px; border-radius:4px; ${badgeStyle}">(${navArea})</span>`;
 }
 
+let boardSearchQuery = '';
+
+window.handleBoardSearchInput = function(val) {
+    boardSearchQuery = (val || '').toLowerCase().replace(/\s+/g, '');
+    renderOperationBoard();
+};
+
+window.handleBoardShipNameClick = function(event, shipCode) {
+    if (event) event.stopPropagation();
+    if (typeof window.navigateToVesselDetail === 'function') {
+        window.navigateToVesselDetail(shipCode);
+    }
+};
+
 function renderOperationBoard() {
     const tbody = document.getElementById('board-tbody');
     const mobileContainer = document.getElementById('board-mobile-cards');
@@ -497,7 +511,7 @@ function renderOperationBoard() {
                 rowsHtml += `
                     <tr class="resting-row">
                         <td><strong>${ship.route}</strong>${areaBadgeHtml}</td>
-                        <td><strong>${cleanName}</strong> <span style="font-size:11px; color:#64748B;">(${tonnageText})</span></td>
+                        <td><strong style="color:#0284C7; text-decoration:underline; cursor:pointer;" onclick="handleBoardShipNameClick(event, '${ship.code}')">${cleanName}</strong> <span style="font-size:11px; color:#64748B;">(${tonnageText})</span></td>
                         <td colspan="3" style="text-align:center; color:#64748B;">대체선 [${subCleanName}] 투입에 따른 운항정지 및 정비</td>
                         <td><span class="status-badge badge-off">⚪ 휴항/정비 (${subCleanName} 대선)</span></td>
                         <td style="color:#94A3B8;">-</td>
@@ -578,11 +592,9 @@ function renderOperationBoard() {
                     let hasRealWind = (!isWaveBuoy && stData.wind !== '-' && stData.wind !== null && !isNaN(windVal) && windVal >= 0 && windVal < 100);
                     let hasRealGust = ((isAws || stData.type === 'buoy') && stData.gust !== '-' && stData.gust !== null && !isNaN(gustVal) && gustVal >= 0 && gustVal < 120);
 
-                    // 평균풍속 기준 위험/주의 판정
                     if (hasRealWind && (windVal >= wLimit)) isAnyWindDanger = true;
                     else if (hasRealWind && (windVal >= (wLimit * 0.85))) isAnyWindWarn = true;
 
-                    // 순간풍속(거스트)이 통제기준 이상이면 통제주의로 상향
                     if (hasRealGust && (gustVal >= wLimit)) {
                         if (!isAnyWindDanger) isAnyWindWarn = true;
                     } else if (hasRealGust && (gustVal >= (wLimit * 0.85))) {
@@ -703,11 +715,24 @@ function renderOperationBoard() {
             if (boardFilterMode === 'special' && (status !== 'captain' && status !== 'office')) isFiltered = true;
             if (boardFilterMode === 'ok' && status !== 'ok') isFiltered = true;
 
+            if (!isFiltered && boardSearchQuery) {
+                let stNames = (parsed.stations || [])
+                    .map(k => (latestBuoyData[k] && latestBuoyData[k].name) ? latestBuoyData[k].name : k)
+                    .join(' ');
+                let warnNames = activeWarningItems.map(w => `${w.sea} ${w.alert}`).join(' ');
+                let searchableText = `${effectiveRoute} ${parsed.navArea || ''} ${cleanName} ${ship.rawName || ''} ${ship.ports || ''} ${ship.notes || ''} ${stNames} ${warnNames}`
+                    .toLowerCase()
+                    .replace(/\s+/g, '');
+                if (!searchableText.includes(boardSearchQuery)) {
+                    isFiltered = true;
+                }
+            }
+
             if (!isFiltered) {
                 rowsHtml += `
                     <tr id="ship-row-${ship.code}">
                         <td><strong>${effectiveRoute}</strong>${areaBadgeHtml}</td>
-                        <td><strong>${cleanName}</strong> <span style="font-size:11px; color:#64748B;">(${tonnageText})</span></td>
+                        <td><strong style="color:#0284C7; text-decoration:underline; cursor:pointer;" onclick="handleBoardShipNameClick(event, '${ship.code}')" title="클릭 시 [${cleanName}] 기초자료로 이동">${cleanName}</strong> <span style="font-size:11px; color:#64748B;">(${tonnageText})</span></td>
                         <td class="clickable-meteo-cell" onclick="toggleMeteoDetailRow('${ship.code}')" title="클릭 시 관측 상세 테이블이 펼쳐집니다.">
                             ${pointDisplay || '-'} <span class="meteo-expand-indicator" id="meteo-toggle-icon-${ship.code}">▼</span>
                         </td>
@@ -728,7 +753,7 @@ function renderOperationBoard() {
                 mobileHtml += `
                     <div style="background:#fff; border:1px solid #E2E8F0; border-radius:8px; padding:12px; margin-bottom:10px;">
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                            <div style="font-weight:bold; color:#1E293B;">[${effectiveRoute}${parsed.navArea ? ' (' + parsed.navArea + ')' : ''}] ${cleanName} <span style="font-size:11px; color:#64748B;">(${tonnageText})</span></div>
+                            <div style="font-weight:bold; color:#1E293B;">[${effectiveRoute}${parsed.navArea ? ' (' + parsed.navArea + ')' : ''}] <span style="color:#0284C7; text-decoration:underline; cursor:pointer;" onclick="handleBoardShipNameClick(event, '${ship.code}')">${cleanName}</span> <span style="font-size:11px; color:#64748B;">(${tonnageText})</span></div>
                             <div>${statusBadge}</div>
                         </div>
                         <div style="font-size:12px; color:#334155; margin-bottom:4px;">${currentDisplay || '관측소 연계 없음'}</div>
