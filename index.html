@@ -92,7 +92,7 @@
         <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
             <button class="btn-weather-refresh" onclick="manualRefreshWeather()">🔄 실시간 기상 조회</button>
             <button class="btn-raw-warn" onclick="openRawWarnModal()">📄 전국 기상특보 통보문</button>
-            
+
             <!-- 💡 기준 시각 선택 (타임머신 기능: 과거 시간 선택 시 기준 시각 역산) -->
             <div class="interval-select-box">
                 <span>🕒 기준시각:</span>
@@ -126,6 +126,10 @@
         <button class="board-filter-btn" onclick="filterBoard('danger', this)">🔴 위험(초과/특보발효) 선박만</button>
         <button class="board-filter-btn" onclick="filterBoard('special', this)">🔵 선장/파견지협의 선박</button>
         <button class="board-filter-btn" onclick="filterBoard('ok', this)">🟢 정상 선박</button>
+    </div>
+
+    <div style="margin: 10px 0 14px 0;">
+        <input type="text" id="board-search-input" placeholder="상황판 내 항로, 선명, 관측소, 특보해역 검색..." oninput="handleBoardSearchInput(this.value)" style="width:100%; padding:11px 14px; font-size:13.5px; border:1px solid #CBD5E1; border-radius:8px; box-sizing:border-box; outline:none; background:#FFFFFF; color:#0F172A;">
     </div>
 
     <!-- [PC 전용 광폭 테이블] -->
