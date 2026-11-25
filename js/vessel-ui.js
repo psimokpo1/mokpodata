@@ -216,7 +216,7 @@ function render() {
 
                 let deployBtnHtml = isOriginalReserve ? `<button class="btn-action btn-deploy-act" onclick="openDeployModal('${v.code}')">🚢 대체투입 설정</button>` : '';
 
-                groupHtml += `<div class="vessel-card ${isReserveGroup ? 'reserve' : ''} ${v.deployedTarget ? 'deployed' : ''} ${v.isHidden ? 'is-hidden' : ''}">
+                groupHtml += `<div class="vessel-card ${isReserveGroup ? 'reserve' : ''} ${v.deployedTarget ? 'deployed' : ''} ${v.isHidden ? 'is-hidden' : ''}" data-shipcode="${v.code}">
                     <div class="vessel-header" data-cleanname="${reserveCleanName}" data-fallbackname="${assetFallbackName}" data-assetname="${assetPrimaryName}" data-uid="${uId}" data-shipcode="${v.code}" onclick="toggleVessel(this, '${assetPrimaryName}', '${uId}', '${v.code}', '${assetFallbackName}')">
                         <div class="vessel-name">${vNameHTML} ${deployedBadge} ${v.isHidden ? '<span class="badge-hidden">선박 숨김</span>' : ''}</div>
                         <div style="font-size:12px; color:#999;">▼</div>
@@ -541,6 +541,73 @@ window.runSearch = () => {
         let list = g.querySelector('.vessel-list');
         if (list) list.style.display = (q !== "" && has) ? 'block' : 'none';
     });
+};
+
+window.navigateToVesselDetail = function(shipCode) {
+    if (!shipCode) return;
+    const targetCode = String(shipCode).trim();
+
+    if (typeof window.switchMainTab === 'function') {
+        window.switchMainTab('ships');
+    }
+
+    const searchEl = document.getElementById('searchInput');
+    if (searchEl && searchEl.value) {
+        searchEl.value = '';
+        if (typeof window.runSearch === 'function') {
+            window.runSearch();
+        }
+    }
+
+    setTimeout(() => {
+        const cards = Array.from(document.querySelectorAll('#mainList .vessel-card[data-shipcode]'));
+        const targetCard = cards.find(c => String(c.dataset.shipcode || '').trim() === targetCode);
+        if (!targetCard) return;
+
+        if (getComputedStyle(targetCard).display === 'none') {
+            const hideToggle = document.getElementById('showHiddenToggle');
+            if (hideToggle && !hideToggle.checked) {
+                hideToggle.checked = true;
+                render();
+                setTimeout(() => window.navigateToVesselDetail(targetCode), 80);
+                return;
+            }
+        }
+
+        const routeGroup = targetCard.closest('.route-group');
+        const vesselList = routeGroup ? routeGroup.querySelector('.vessel-list') : null;
+        if (vesselList && getComputedStyle(vesselList).display === 'none') {
+            vesselList.style.display = 'block';
+            vesselList.querySelectorAll('.vessel-header[data-uid]').forEach(hdr => {
+                const detailEl = hdr.nextElementSibling;
+                if (detailEl && getComputedStyle(detailEl).display !== 'none') {
+                    loadVesselAssets(hdr.dataset.assetname || hdr.dataset.cleanname, hdr.dataset.uid, hdr.dataset.shipcode, hdr.dataset.fallbackname || '');
+                }
+            });
+        }
+
+        const headerEl = targetCard.querySelector('.vessel-header[data-uid]');
+        const detailEl = headerEl ? headerEl.nextElementSibling : null;
+        if (headerEl && detailEl && getComputedStyle(detailEl).display === 'none') {
+            detailEl.style.display = 'block';
+            loadVesselAssets(
+                headerEl.dataset.assetname || headerEl.dataset.cleanname,
+                headerEl.dataset.uid,
+                headerEl.dataset.shipcode,
+                headerEl.dataset.fallbackname || ''
+            );
+        }
+
+        targetCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        const prevOutline = targetCard.style.outline;
+        const prevBg = targetCard.style.backgroundColor;
+        targetCard.style.outline = '3px solid #0284C7';
+        targetCard.style.backgroundColor = '#F0F9FF';
+        setTimeout(() => {
+            targetCard.style.outline = prevOutline;
+            targetCard.style.backgroundColor = prevBg;
+        }, 1800);
+    }, 60);
 };
 
 function processImageFile(file, maxWidth = 1200, quality = 0.75) {
